@@ -7,8 +7,8 @@ from portal_core.constants import (
     _TEXT_COLOR
 )
 from portal_core.utils import _section_label
-from ocean_sites.utils import _format_value_for_ui
-from ocean_sites.layouts import _extra_attr_row
+from utils import _format_value_for_ui
+from layouts import _extra_attr_row
 
 # ----------------------------------------------------------
 # Dimension pill strip
