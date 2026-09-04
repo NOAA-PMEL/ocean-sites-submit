@@ -1,7 +1,7 @@
 import copy
 import numpy as np
 import math
-from models import (
+from ocean_sites.models import (
     NetcdfGlobalAttributes, 
     NetcdfDimension, 
     NetcdfVariable, 
@@ -13,7 +13,7 @@ from portal_core.utils import (
     get_oads_metadata_id
 )
 from sqlalchemy import select
-from metadata_diff import _coerce_enum, GLOBAL_ATTR_ENUM_FIELDS, VARIABLE_ENUM_FIELDS
+from ocean_sites.utils.metadata_diff import _coerce_enum, GLOBAL_ATTR_ENUM_FIELDS, VARIABLE_ENUM_FIELDS
 
 GLOBAL_ATTRIBUTES = "global_attributes" # keys in nc parser dict
 OG_NETCDF_METADATA = "og_netcdf_metadata"

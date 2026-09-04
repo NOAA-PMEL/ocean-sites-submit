@@ -6,7 +6,7 @@ from portal_core.constants import (
     _dropdown_style,
     _BORDER_COLOR,
 )
-from models.ocean_sites import DataMode, DataType, FormatVersion
+from ocean_sites.models.ocean_sites import DataMode, DataType, FormatVersion
 
 _DIFF_BADGE_COLORS = {
     'changed': '#f7b44f',

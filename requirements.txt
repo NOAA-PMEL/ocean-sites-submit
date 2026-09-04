@@ -1,0 +1,6 @@
+--extra-index-url=https://dash-temp.pmel.noaa.gov/Docs/packages
+
+portal-core @ git+https://github.com/NOAA-PMEL/portal-core.git@v0.1.2
+
+xarray
+netCDF4

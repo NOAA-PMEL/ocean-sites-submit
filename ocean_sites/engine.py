@@ -1,5 +1,5 @@
 from portal_core.engine import PortalEngine
-from layouts import changes_bar
+from ocean_sites.layouts import changes_bar
 from dash import dcc
 
 class Engine(PortalEngine):

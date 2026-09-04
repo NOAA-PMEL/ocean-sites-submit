@@ -2,7 +2,7 @@ from math import e
 import uuid
 from dash import Input, Output, State, ALL, ctx, html, MATCH, Patch
 from dash.exceptions import PreventUpdate
-from layouts import (
+from ocean_sites.layouts import (
     _extra_attr_row,
     _extra_attr_row_children, 
     _err_text,
@@ -11,8 +11,8 @@ from layouts import (
     diff_badge_children, 
     diff_badge_style
     )
-from utils import _format_value_for_ui, global_problems_by_field
-from utils import app_logger as log
+from ocean_sites.utils import _format_value_for_ui, global_problems_by_field
+from portal_core.utils import app_logger as log
 
 def register_callbacks(app):
     # Add global attribute

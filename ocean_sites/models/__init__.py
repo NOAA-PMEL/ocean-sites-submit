@@ -1,4 +1,4 @@
-from models.ocean_sites import (
+from ocean_sites.models.ocean_sites import (
     DataMode, 
     DataType, 
     FormatVersion,

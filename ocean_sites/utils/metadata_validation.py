@@ -27,7 +27,7 @@ import math
 from dataclasses import dataclass, asdict
 from typing import Any, Optional
 from pydantic import ValidationError
-from models import (
+from ocean_sites.models import (
     NetcdfGlobalAttributes,
     NetcdfVariable,
     NetcdfGlobalAttributesSchema,
@@ -35,7 +35,7 @@ from models import (
     NetcdfCoordinateVariableSchema,
     NetcdfQCVariableSchema
 )
-from utils.metadata_diff import (
+from ocean_sites.utils.metadata_diff import (
     _coerce_enum,
     GLOBAL_ATTR_ENUM_FIELDS,
 )

@@ -1,5 +1,5 @@
 from dash import html
-from layouts import diff_badge_style
+from ocean_sites.layouts import diff_badge_style
 
 def _count_badge(kind: str):
     return html.Span(

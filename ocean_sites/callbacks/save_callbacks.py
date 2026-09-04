@@ -4,7 +4,7 @@ from sqlalchemy import select
 from dash import Input, Output, State, html, no_update, ALL, ctx
 from dash.exceptions import PreventUpdate
 from sqlalchemy.orm import Session
-from utils import (
+from ocean_sites.utils import (
     build_metadata_diff, 
     summarize_diff_counts,
     validate_metadata,
@@ -17,7 +17,7 @@ from utils import (
     GLOBAL, 
     VARIABLE
     )
-from layouts import(
+from ocean_sites.layouts import(
     build_ledger_children,
 )
 from portal_core.constants import (
@@ -26,7 +26,7 @@ from portal_core.constants import (
     UPLOAD_DIRECTORY,
     postgres_engine,
 )
-from models.ocean_sites import NetcdfGlobalAttributes
+from ocean_sites.models.ocean_sites import NetcdfGlobalAttributes
 from portal_core.utils import (
     get_oads_metadata_id,
     get_data_files,

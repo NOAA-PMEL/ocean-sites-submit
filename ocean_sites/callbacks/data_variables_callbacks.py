@@ -1,6 +1,6 @@
 from dash import Input, Output, State, ALL, html, ctx, no_update, MATCH, Patch
 from dash.exceptions import PreventUpdate
-from layouts import (
+from ocean_sites.layouts import (
     _var_card_body_children, 
     _var_err_pill_style,
     _extra_attr_row, 
@@ -9,7 +9,7 @@ from layouts import (
     diff_badge_style, 
     _err_text
 )
-from utils import error_count_by_variable, variable_problems_by_name, _visible_problems
+from ocean_sites.utils import error_count_by_variable, variable_problems_by_name, _visible_problems
 import uuid
 
 _VAR_TYPE_COLORS = {

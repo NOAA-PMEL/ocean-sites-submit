@@ -1,4 +1,4 @@
-from utils.utils import (
+from ocean_sites.utils.utils import (
     _format_value_for_ui, 
     _visible_problems,
     load_ocean_sites_metadata, 
@@ -7,7 +7,7 @@ from utils.utils import (
     build_global_attributes_dict,
     build_variables_list
 )
-from utils.metadata_validation import (
+from ocean_sites.utils.metadata_validation import (
     global_problems_by_field,
      error_count_by_variable, 
      variable_problems_by_name,
@@ -15,14 +15,14 @@ from utils.metadata_validation import (
      GLOBAL, 
      VARIABLE
      )
-from utils.metadata_diff import (
+from ocean_sites.utils.metadata_diff import (
     build_metadata_diff, 
     summarize_diff_counts,
     _coerce_enum,
     GLOBAL_ATTR_ENUM_FIELDS,
     VARIABLE_ENUM_FIELDS
 )
-from utils.netcdf_parser import OceanSitesNetcdfParser
+from ocean_sites.utils.netcdf_parser import OceanSitesNetcdfParser
 
 
 __all__ = [
