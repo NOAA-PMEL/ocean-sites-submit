@@ -269,7 +269,11 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
             style=diff_badge_style('removed'),
             children=diff_badge_children('removed', f"was: {value}" if value else None),
         ) if removed else None,
-        action_button
+        action_button,
+        html.Div(
+            id={'type': 'nc-var-extra-attr-validation', 'index': var_uid, 'attr_uid': uid},
+            style={'flexBasis': '100%'},
+        ) if var_uid is not None else None
     ]
     
 def _extra_attr_row(uid: str, key: str = '', value: str = '', var_uid: str=None, removed: bool = False, is_original: bool = False):
@@ -302,6 +306,7 @@ def _extra_attr_row(uid: str, key: str = '', value: str = '', var_uid: str=None,
             'borderRadius': '6px',
             'padding': '8px 12px',
             'display': 'flex',
+            'flexWrap': 'wrap',
             'alignItems': 'center',
             'gap': '10px',
             'marginBottom': '6px', 

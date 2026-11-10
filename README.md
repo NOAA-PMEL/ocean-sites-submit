@@ -250,16 +250,9 @@ To upgrade:
 6. Commit -- the upgrade is a commit in *this* repo's history, which is what
    makes a later breakage traceable
 
-**Never pin `@main`.** That means "whatever is newest at install time," so two
-deploys a week apart can get different base code with no record of it.
-
-Versioning: **patch** is a bug fix; **minor** adds a hook with a working default
+Versioning regarding `portal-core`: **patch** is a bug fix; **minor** adds a hook with a working default
 and does not affect this portal; **major** changed or removed a hook and
 requires migration.
-
-This portal overrides four hooks -- `metadata_tabs`, `modal_after_header`,
-`sidebar_tab_extras`, and `app_stores` -- so a major release touching any of
-those needs attention here.
 
 If pip reports the old version after step 3, it reused a cached clone:
 
@@ -294,14 +287,9 @@ connections across forked workers.
 This repo pushes to two unrelated places:
 
 ```bash
-git push origin main     # GitHub -- source of truth, code review
-git push plotly main     # Dash Enterprise -- what actually deploys
+git push origin workspace:main     # GitHub -- source of truth, code review
+git push plotly workspace     # Dash Enterprise -- what actually deploys
 ```
-
-Plain `git push` goes to `origin` only. **If a deploy seems to ignore your
-changes, compare the commit hash in the deployment banner against
-`git log --oneline -1`.** If they differ, you did not push to `plotly`.
-
 ---
 
 ## Troubleshooting

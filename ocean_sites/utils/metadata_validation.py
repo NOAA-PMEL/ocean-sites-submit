@@ -33,7 +33,8 @@ from ocean_sites.models import (
     NetcdfGlobalAttributesSchema,
     NetcdfDataVariableSchema,
     NetcdfCoordinateVariableSchema,
-    NetcdfQCVariableSchema
+    NetcdfQCVariableSchema,
+    NetcdfDMVariableSchema
 )
 from ocean_sites.utils.metadata_diff import (
     _coerce_enum,
@@ -52,12 +53,13 @@ VARIABLE = "variable"
 _SCHEMA_BY_VAR_TYPE = {
     "data": NetcdfDataVariableSchema,
     "coordinate": NetcdfCoordinateVariableSchema,
-    "qc": NetcdfQCVariableSchema
+    "qc": NetcdfQCVariableSchema,
+    "dm": NetcdfDMVariableSchema,
 }
 
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
-    "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
+    "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "long_name", "units"
 )
 
 def _labels_for(model) -> dict:
@@ -76,6 +78,47 @@ _BOUND_PAIRS = (
     ("geospatial_lat_min", "geospatial_lat_max"),
     ("geospatial_lon_min", "geospatial_lon_max"),
     ("geospatial_vertical_min", "geospatial_vertical_max")
+)
+
+_COORDINATE_QC_INDICATORS = (
+    "unknown",
+    "good data",
+    "probably good data",
+    "potentially correctable bad data",
+    "bad data",
+    "nominal value",
+    "interpolated value",
+    "missing value",
+)
+
+_COORDINATE_PROCESSING_LEVELS = (
+    "Raw instrument data",
+    "Instrument data that has been converted to geophysical values",
+    "Post-recovery calibrations have been applied",
+    "Data has been scaled using contextual information",
+    "Known bad data has been replaced with null values",
+    "Known bad data has been replaced with values based on surrounding data",
+    "Ranges applied, bad data flagged",
+    "Data interpolated",
+    "Data manually reviewed",
+    "Data verified against model or other contextual information",
+    "Other QC process applied",
+)
+
+_COORDINATE_REFERENCE_FRAMES = {
+    "X": ("urn:ogc:def:crs:EPSG::4326",),
+    "Y": ("urn:ogc:def:crs:EPSG::4326",),
+    "Z": (
+        "urn:ogc:def:crs:EPSG::5831",
+        "urn:ogc:def:crs:EPSG::5829",
+    ),
+}
+
+_VERTICAL_REFERENCES = (
+    "sea_level",
+    "mean_sea_level",
+    "mean_lower_low_water",
+    "wgs84_geoid",
 )
 
 # --------------------------------------------------------------
@@ -99,6 +142,133 @@ def _cross_field_problems(g: dict) -> list:
                 also_fields=(lo,),
             ))
     return out
+
+def _coordinate_attribute_problems(var: dict) -> list:
+    """Validate optional coordinate attributes when the source provides them."""
+    axis = str(var.get("axis") or "").upper()
+    if axis not in {"T", "Z", "Y", "X"}:
+        return []
+
+    extra_attrs = var.get("extra_attrs") or {}
+    if not isinstance(extra_attrs, dict):
+        return []
+
+    attrs = {
+        str(key).lower(): _blank_to_none(value)
+        for key, value in extra_attrs.items()
+    }
+    name = var.get("name") or "(unamed)"
+    problems = []
+
+    def add_invalid(field: str, message: str, value: Any, options=None):
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field=field,
+            message=message,
+            invalid_value=value,
+            valid_options=list(options) if options else None,
+        ))
+
+    def finite_number(field: str) -> Optional[float]:
+        value = attrs.get(field)
+        if value is None:
+            return None
+        if hasattr(value, "item"):
+            try:
+                value = value.item()
+            except ValueError:
+                add_invalid(field, f"{field} must be a finite number.", value)
+                return None
+        if isinstance(value, bool):
+            number = None
+        else:
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                number = None
+        if number is None or not math.isfinite(number):
+            add_invalid(field, f"{field} must be a finite number.", value)
+            return None
+        return number
+
+    valid_min = finite_number("valid_min")
+    valid_max = finite_number("valid_max")
+    axis_limits = {
+        "X": (-180.0, 180.0),
+        "Y": (-90.0, 90.0),
+    }.get(axis)
+    if axis_limits:
+        lower, upper = axis_limits
+        if valid_min is not None and not lower <= valid_min <= upper:
+            add_invalid("valid_min", f"Must be between {lower:g} and {upper:g} for axis {axis}.", attrs["valid_min"])
+        if valid_max is not None and not lower <= valid_max <= upper:
+            add_invalid("valid_max", f"Must be between {lower:g} and {upper:g} for axis {axis}.", attrs["valid_max"])
+    if valid_min is not None and valid_max is not None and valid_min >= valid_max:
+        add_invalid("valid_max", f"Must be greater than valid_min ({valid_min:g}).", attrs["valid_max"])
+
+    qc_indicator = attrs.get("qc_indicator")
+    if qc_indicator is not None:
+        normalized = " ".join(str(qc_indicator).replace("_", " ").split()).casefold()
+        allowed = {" ".join(option.split()).casefold() for option in _COORDINATE_QC_INDICATORS}
+        if normalized not in allowed:
+            add_invalid("qc_indicator", "Not a recognized OceanSITES QC indicator.", qc_indicator, _COORDINATE_QC_INDICATORS)
+
+    processing_level = attrs.get("processing_level")
+    if processing_level is not None:
+        normalized = " ".join(str(processing_level).split()).casefold()
+        allowed = {" ".join(option.split()).casefold() for option in _COORDINATE_PROCESSING_LEVELS}
+        if normalized not in allowed:
+            add_invalid("processing_level", "Not a recognized OceanSITES processing level.", processing_level, _COORDINATE_PROCESSING_LEVELS)
+
+    positive = attrs.get("positive")
+    positive_direction = str(positive).strip().casefold() if positive is not None else None
+    coordinate_reference_frame = attrs.get("coordinate_reference_frame")
+    if coordinate_reference_frame is not None and axis in _COORDINATE_REFERENCE_FRAMES:
+        options = _COORDINATE_REFERENCE_FRAMES[axis]
+        if axis == "Z" and positive_direction == "down":
+            options = ("urn:ogc:def:crs:EPSG::5831",)
+        elif axis == "Z" and positive_direction == "up":
+            options = ("urn:ogc:def:crs:EPSG::5829",)
+        if str(coordinate_reference_frame).strip() not in options:
+            add_invalid("coordinate_reference_frame", f"Must be a valid reference frame for axis {axis}.", coordinate_reference_frame, options)
+
+    reference = attrs.get("reference")
+    if reference is not None:
+        if axis in {"X", "Y"}:
+            if str(reference).strip().casefold() != "wgs84":
+                add_invalid("reference", "Horizontal coordinate reference must be WGS84.", reference, ("WGS84",))
+        elif axis == "Z":
+            normalized = str(reference).strip().casefold()
+            options = tuple(option for option in _VERTICAL_REFERENCES if option.casefold() == normalized)
+            if not options:
+                add_invalid("reference", "Not a recognized vertical reference.", reference, _VERTICAL_REFERENCES)
+
+    if positive is not None and (axis != "Z" or str(positive).strip().casefold() not in {"up", "down"}):
+        add_invalid("positive", "Positive must be 'up' or 'down' and is only valid for a Z coordinate.", positive, ("up", "down"))
+
+    for field in ("uncertainty", "accuracy"):
+        value = attrs.get(field)
+        if value is None:
+            continue
+        if hasattr(value, "item"):
+            try:
+                value = value.item()
+            except ValueError:
+                add_invalid(field, f"{field} must be a finite, non-negative number.", value)
+                continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            number = None
+        if isinstance(value, bool) or number is None or not math.isfinite(number) or number < 0:
+            add_invalid(field, f"{field} must be a finite, non-negative number.", value)
+
+    comment = attrs.get("comment")
+    if comment is not None and (not isinstance(comment, str) or not comment.strip()):
+        add_invalid("comment", "Comment must be non-empty text when provided.", comment)
+
+    return problems
 
 # --------------------------------------------------------------
 # Problem
@@ -320,17 +490,20 @@ def _validate_variable(var: dict) -> list:
             valid_options=list(_SCHEMA_BY_VAR_TYPE)
         )]
 
+    problems = []
     try:
         schema.model_validate(_clean_variable(var))
     except ValidationError as exc:
-        return [
+        problems.extend(
             p
             for err in exc.errors()
             for p in _problems_from_error(
                 err, VARIABLE, _VARIABLE_LABELS, _VARIABLE_FIELDS, var_name=name
             )
-        ]
-    return []
+        )
+    if var_type == "coordinate":
+        problems.extend(_coordinate_attribute_problems(var))
+    return problems
 
 # --------------------------------------------------------------
 # Read helpers for the UI layer
