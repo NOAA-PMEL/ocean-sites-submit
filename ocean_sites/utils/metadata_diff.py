@@ -27,7 +27,7 @@ FIXED_GLOBAL_ATTR_FIELDS = (
 
 FIXED_VARIABLE_FIELDS = (
     "var_type", "dtype", "dimensions",
-    "standard_name", "long_name", "units", "fill_value", "coordinates",
+    "standard_name", "units", "fill_value", "coordinates",
     "axis", "flag_values", "flag_meanings"
 )
 

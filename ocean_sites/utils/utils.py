@@ -22,10 +22,7 @@ VARIABLES = "variables"
 
 # columns that are typed as string in the sQLAclhemy model by may arrive as numeric/native
 # types once numpy scalars are unwrapped (e.g. fill_value)
-VARIABLE_STRING_FIELDS = (
-    "fill_value", "flag_values", "flag_meanings", "axis",
-    "standard_name", "long_name", "units"
-)
+VARIABLE_STRING_FIELDS = ("fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units")
 
 GLOBAL_ATTR_EXCLUDE = {"id", "oads_metadata_id", "og_netcdf_metadata", "extra_global_attrs"}
 GLOBAL_ATTR_FIELDS = tuple(
@@ -339,7 +336,6 @@ def build_global_attributes_dict(
 
 def build_variables_list(
     vars_store, standard_name_ids, standard_name_values, units_ids, units_values, 
-    long_name_ids, long_name_values,
     fill_value_ids, fill_value_values, coordinate_ids, coordinate_values, 
     axis_ids, axis_values, flag_values_ids, flag_values_values,
     flag_meanings_ids, flag_meanings_values, 
@@ -356,7 +352,6 @@ def build_variables_list(
 
     standard_name_map = _by_uids(standard_name_ids, standard_name_values)
     units_map = _by_uids(units_ids, units_values)
-    long_name_map = _by_uids(long_name_ids, long_name_values)
     fill_values_map = _by_uids(fill_value_ids, fill_value_values)
     coordinate_map = _by_uids(coordinate_ids, coordinate_values)
     axis_map = _by_uids(axis_ids, axis_values)
@@ -382,7 +377,7 @@ def build_variables_list(
 
     # uids with at least one mounted fixed-field input = expanded cards
     mounted = set()
-    for ids in (standard_name_ids, units_ids, long_name_ids, fill_value_ids, coordinate_ids,
+    for ids in (standard_name_ids, units_ids, fill_value_ids, coordinate_ids,
                 axis_ids, flag_values_ids, flag_meanings_ids):
         mounted.update(id_['index'] for id_ in (ids or []))
 
@@ -433,12 +428,6 @@ def build_variables_list(
                 "fill_value": live_or_stored(fill_values_map, "fill_value"),
                 "flag_values": live_or_stored(flag_values_map, 'flag_values'),
                 "flag_meanings": live_or_stored(flag_meanings_map, 'flag_meanings'),
-            })
-        elif var_type == "dm":
-            variable_dict.update({
-                "long_name": live_or_stored(long_name_map, "long_name"),
-                "flag_values": live_or_stored(flag_values_map, "flag_values"),
-                "flag_meanings": live_or_stored(flag_meanings_map, "flag_meanings"),
             })
         variables.append(variable_dict)
 

@@ -30,7 +30,6 @@ class OceanSitesNetcdfParser:
     COORDINATE = "coordinate"
     DATA = "data"
     QC = "qc"
-    DM = "dm"
     
     # SQL Alchemy NetcdfVariable fields
     NAME = "name" # also for dimension table
@@ -38,7 +37,6 @@ class OceanSitesNetcdfParser:
     DTYPE = "dtype"
     DIMENSIONS = "dimensions"
     STANDARD_NAME = "standard_name"
-    LONG_NAME = "long_name"
     UNITS = "units"
     FILL_VALUE = "fill_value" # required for data variables
     COORDINATES = "coordinates" # required for data variables
@@ -185,10 +183,7 @@ class OceanSitesNetcdfParser:
         # Process QC and data variables next
         try:
             for name, var in self.ds.data_vars.items():
-                if name.endswith("_DM"):
-                    attribute_dict, required_fields = self.peel_out_required_var_attrs(dict(var.attrs), var_type="dm")
-                    var_type = self.DM
-                elif "qc" in name.lower():
+                if "qc" in name.lower():
                     attribute_dict, required_fields = self.peel_out_required_var_attrs(dict(var.attrs), var_type="qc")
                     var_type = self.QC
                 else:
@@ -215,7 +210,7 @@ class OceanSitesNetcdfParser:
             
             attributed_dict:    The dictionary for the attribute key value pairs
                                 for the specified variable
-            var_type:           The variable type: data, coordinate, qc, or dm
+            var_type:           The variable type. Either: data, coordinate, or qc
         """
         required_dict = {}
 
@@ -251,48 +246,14 @@ class OceanSitesNetcdfParser:
                 required_dict[self.FILL_VALUE] = attribute_dict.get("_FillValue")
                 attribute_dict.pop("_FillValue")
             if "flag_values" in attribute_dict.keys():
-                required_dict[self.FLAG_VALUES] = self._attribute_to_string(
-                    attribute_dict.pop("flag_values")
-                )
+                required_dict[self.FLAG_VALUES] = str(attribute_dict.get("flag_values")).replace('[', '').replace(']', '')
+                attribute_dict.pop("flag_values")
             if "flag_meanings" in attribute_dict.keys():
-                required_dict[self.FLAG_MEANINGS] = self._attribute_to_string(
-                    attribute_dict.pop("flag_meanings")
-                )
-        elif var_type == "dm":
-            if "long_name" in attribute_dict:
-                value = attribute_dict.pop("long_name")
-                if isinstance(value, bytes):
-                    value = value.decode()
-                required_dict[self.LONG_NAME] = value
-            for name in ("flag_values", "flag_meanings"):
-                if name in attribute_dict:
-                    value = attribute_dict.pop(name)
-                    if hasattr(value, "tolist"):
-                        value = value.tolist()
-                    if isinstance(value, (list, tuple)):
-                        value = " ".join(
-                            item.decode() if isinstance(item, bytes) else str(item)
-                            for item in value
-                        )
-                    elif isinstance(value, bytes):
-                        value = value.decode()
-                    required_dict[name] = str(value)
+                required_dict[self.FLAG_MEANINGS] = attribute_dict.get("flag_meanings")
+                attribute_dict.pop("flag_meanings")
 
 
         return attribute_dict, required_dict
-
-    @staticmethod
-    def _attribute_to_string(value) -> str:
-        if hasattr(value, "tolist"):
-            value = value.tolist()
-        if isinstance(value, bytes):
-            return value.decode()
-        if isinstance(value, (list, tuple)):
-            return " ".join(
-                item.decode() if isinstance(item, bytes) else str(item)
-                for item in value
-            )
-        return str(value)
         
             
                 

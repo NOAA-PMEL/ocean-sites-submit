@@ -282,15 +282,13 @@ class VarType(str, enum.Enum):
     DATA = "data"
     COORDINATE = "coordinate"
     QC = "qc"
-    DM = "dm"
     
     @property
     def label(self):
         labels = {
             "data": "Data Variable",
             "coordinate": "Coordinate Variable",
-            "qc": "QC Variable",
-            "dm": "Data Mode Variable",
+            "qc": "QC Variable"
         }
         return labels[self.value]
 
@@ -330,9 +328,6 @@ class NetcdfVariable(Base):
     # --- Attributes shared across var types ----
     standard_name: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, info={"label": "Standard Name"}
-    )
-    long_name: Mapped[Optional[str]] = mapped_column(
-        String, nullable=True, info={"label": "Long Name"}
     )
     units: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, info={"label": "Units"}
@@ -382,7 +377,7 @@ class NetcdfVariable(Base):
     ),
 )
 
-# Variable pydantic schemas are split by OceanSITES variable type.
+# Variable pydantic schemas have been split into three based on the three var_types (data, coordinate, and qc)
 class NetcdfVariableBaseSchema(BaseModel):
     """Fields common to all variable types"""
     
@@ -400,13 +395,6 @@ class NetcdfCoordinateVariableSchema(NetcdfVariableBaseSchema):
     units: str
     axis: str
 
-    @field_validator("axis")
-    @classmethod
-    def validate_axis(cls, value: str) -> str:
-        if value not in {"T", "Z", "Y", "X"}:
-            raise ValueError("must be one of T, Z, Y, or X")
-        return value
-
 class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for data variables"""
     var_type: VarType = VarType.DATA
@@ -422,79 +410,6 @@ class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     fill_value: str
     flag_values: str
     flag_meanings: str
-
-    @field_validator("flag_values")
-    @classmethod
-    def validate_qc_flag_values(cls, value: str) -> str:
-        tokens = [
-            re.sub(r"[bB]$", "", token.strip("'\"[](){}"))
-            for token in re.split(r"[\s,]+", value.strip())
-            if token.strip("'\"[](){}")
-        ]
-        if tokens != ["0", "1", "2", "3", "4", "7", "8", "9"]:
-            raise ValueError("must contain the fixed QC flag values 0, 1, 2, 3, 4, 7, 8, 9")
-        return value
-
-    @field_validator("flag_meanings")
-    @classmethod
-    def validate_qc_flag_meanings(cls, value: str) -> str:
-        tokens = [
-            token.strip("'\"[](){}")
-            for token in re.split(r"[\s,]+", value.strip())
-            if token.strip("'\"[](){}")
-        ]
-        expected = [
-            "unknown",
-            "good_data",
-            "probably_good_data",
-            "potentially_correctable_bad_data",
-            "bad_data",
-            "nominal_value",
-            "interpolated_value",
-            "missing_value",
-        ]
-        if tokens != expected:
-            raise ValueError("must contain the fixed OceanSITES QC flag meanings in flag-value order")
-        return value
-
-class NetcdfDMVariableSchema(NetcdfVariableBaseSchema):
-    """Schema for per-variable OceanSITES data-mode variables."""
-    var_type: VarType = VarType.DM
-    long_name: str
-    flag_values: str
-    flag_meanings: str
-
-    @field_validator("dtype")
-    @classmethod
-    def validate_dm_dtype(cls, value: str) -> str:
-        if value not in {"char", "S1", "|S1", "U1", "<U1"}:
-            raise ValueError("must be a character type for a data-mode variable")
-        return value
-
-    @field_validator("long_name")
-    @classmethod
-    def validate_dm_long_name(cls, value: str) -> str:
-        if value.strip().lower() != "data mode":
-            raise ValueError("must be 'data mode' for a data-mode variable")
-        return value
-
-    @field_validator("flag_values")
-    @classmethod
-    def validate_dm_flag_values(cls, value: str) -> str:
-        tokens = [token.strip("'\"") for token in re.split(r"[\s,]+", value.strip()) if token]
-        if tokens != ["R", "P", "D", "M"]:
-            raise ValueError("must contain the fixed values R, P, D, M")
-        return value
-
-    @field_validator("flag_meanings")
-    @classmethod
-    def validate_dm_flag_meanings(cls, value: str) -> str:
-        tokens = re.split(r"[\s,]+", value.strip())
-        if tokens != ["real-time", "provisional", "delayed-mode", "mixed"]:
-            raise ValueError(
-                "must contain the fixed meanings real-time, provisional, delayed-mode, mixed"
-            )
-        return value
 
 
 class OceanSitesOadsMetadataSchema(OadsMetadataSchema):

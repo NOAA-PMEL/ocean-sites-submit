@@ -16,15 +16,13 @@ _VAR_TYPE_COLORS = {
     'all': '#4f8ef7',
     'data': '#b968e0',
     'coordinate': '#38d9a9',
-    'qc': '#f7b44f',
-    'dm': '#56b4d3'
+    'qc': '#f7b44f'
                     }
 _VAR_TYPE_LABLES = {
     'all': 'total',
     'data': 'data',
     'coordinate': 'coordinate',
-    'qc': 'QC',
-    'dm': 'DM'
+    'qc': 'QC'
 }
 def register_callbacks(app):
 
@@ -554,37 +552,6 @@ def register_callbacks(app):
             classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
 
         return children, classes
-
-    @app.callback(
-        Output({'type': 'nc-var-extra-attr-validation', 'index': ALL, 'attr_uid': ALL}, 'children'),
-        Input('metadata-problems-store', 'data'),
-        Input('metadata-validation-mode', 'data'),
-        Input('current-submission', 'data'),
-        State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'id'),
-        State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'value'),
-        State('nc-vars-store', 'data'),
-        prevent_initial_call=True
-    )
-    def update_var_extra_attr_errors(problems, mode, submission_id, key_ids, key_values, vars_store):
-        problems = _visible_problems(problems, mode, submission_id)
-        name_by_uid = {var['uid']: var.get('name') for var in (vars_store or [])}
-        key_by_id = {
-            (id_['index'], id_['attr_uid']): (value or '').strip().lower()
-            for id_, value in zip(key_ids or [], key_values or [])
-        }
-        by_name = variable_problems_by_name(problems)
-        error_ids = [match['id'] for match in ctx.outputs_list]
-
-        children = []
-        for id_ in error_ids:
-            var_name = name_by_uid.get(id_['index'])
-            key = key_by_id.get((id_['index'], id_['attr_uid']), '')
-            problem = by_name.get(var_name, {}).get(key) if var_name and key else None
-            children.append(
-                _err_text(problem['message'], problem['severity'])
-                if problem else []
-            )
-        return children
 
 
 
