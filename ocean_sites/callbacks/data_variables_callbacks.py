@@ -528,14 +528,19 @@ def register_callbacks(app):
         Output({'type': 'nc-var-field-err', 'index': ALL, 'field': ALL}, 'children'),
         Output({'type': 'nc-var-field-wrap', 'index': ALL, 'field': ALL}, 'className'),
         Output({'type': 'nc-var-record-err', 'index': ALL}, 'children'),
+        Output({'type': 'nc-var-extra-attr-err', 'index': ALL, 'attr_uid': ALL}, 'children'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
         Input({'type': 'nc-var-card-body', 'index': ALL}, 'style'), #  Body style flip on expand/collapse. Without this input, a card opened after the last validation run would mount empty error slots and never fill them
         State('nc-vars-store', 'data'),
+        State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'id'),
+        State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'value'),
         prevent_initial_call=True
     )
-    def update_var_field_errors(problems, mode, submission_id, body_styles, vars_store):
+    def update_var_field_errors(
+        problems, mode, submission_id, body_styles, vars_store, extra_attr_key_ids, extra_attr_key_values
+    ):
         problems = _visible_problems(problems, mode, submission_id)
         by_name = variable_problems_by_name(problems)
         name_by_uid = {v['uid']: v.get('name') for v in (vars_store or [])}
@@ -543,6 +548,11 @@ def register_callbacks(app):
         err_ids = [m['id'] for m in ctx.outputs_list[0]]
         wrap_ids = [m['id']for m in ctx.outputs_list[1]]
         record_ids = [m['id'] for m in ctx.outputs_list[2]]
+        extra_attr_err_ids = [m['id'] for m in ctx.outputs_list[3]]
+        extra_attr_keys = {
+            (id_['index'], id_['attr_uid']): (value or '').strip()
+            for id_, value in zip(extra_attr_key_ids or [], extra_attr_key_values or [])
+        }
 
         def _lookup(id_):
             return by_name.get(name_by_uid.get(id_['index']), {}).get(id_['field'])
@@ -565,13 +575,26 @@ def register_callbacks(app):
         for id_ in record_ids:
             var_name = name_by_uid.get(id_['index'])
             field_problems = by_name.get(var_name, {})
+            extra_fields = {
+                field for (uid, _), field in extra_attr_keys.items()
+                if uid == id_['index']
+            }
             record_errors.append([
                 _err_text(problem['message'], problem['severity'])
                 for field, problem in field_problems.items()
-                if field not in visible_fields
+                if field not in visible_fields and field not in extra_fields
             ])
 
-        return children, classes, record_errors
+        extra_attr_errors = []
+        for id_ in extra_attr_err_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
+            problem = by_name.get(var_name, {}).get(field)
+            extra_attr_errors.append(
+                _err_text(problem['message'], problem['severity']) if problem else []
+            )
+
+        return children, classes, record_errors, extra_attr_errors
 
 
 

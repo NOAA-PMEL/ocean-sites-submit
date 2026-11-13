@@ -324,6 +324,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
             add(p)
     for p in _ancillary_variable_problems(variables):
         add(p)
+    for p in _ancillary_reference_problems(variables):
+        add(p)
 
     return [asdict(p) for p in problems]
 
@@ -473,6 +475,47 @@ def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
                 field="units",
                 message="Uncertainty units must match the paired data variable.",
             ))
+    return problems
+
+def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
+    variable_names = {
+        var.get("name")
+        for var in variables
+        if isinstance(var.get("name"), str)
+    }
+    problems = []
+
+    for var in variables:
+        extra_attrs = var.get("extra_attrs")
+        if not isinstance(extra_attrs, dict):
+            continue
+
+        for field in ("ancillary_variable", "ancillary_variables"):
+            value = extra_attrs.get(field)
+            if value is None:
+                continue
+            if hasattr(value, "tolist"):
+                value = value.tolist()
+            values = value if isinstance(value, (list, tuple)) else [value]
+            references = []
+            for item in values:
+                if isinstance(item, bytes):
+                    item = item.decode()
+                references.extend(str(item).replace(",", " ").split())
+
+            missing = list(dict.fromkeys(
+                name for name in references if name not in variable_names
+            ))
+            if missing:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=var.get("name") or "(unamed)",
+                    field=field,
+                    message=(
+                        f"Referenced variable(s) not found: {', '.join(missing)}."
+                    ),
+                ))
+
     return problems
 
 # --------------------------------------------------------------
