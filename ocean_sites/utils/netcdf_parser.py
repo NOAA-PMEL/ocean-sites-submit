@@ -1,6 +1,7 @@
 import xarray as xr
 import netCDF4 as nc
 from portal_core.utils import app_logger as log
+from ocean_sites.utils.variable_types import infer_special_variable_type
 
 class OceanSitesNetcdfParser:
 
@@ -30,6 +31,8 @@ class OceanSitesNetcdfParser:
     COORDINATE = "coordinate"
     DATA = "data"
     QC = "qc"
+    DM = "dm"
+    UNCERTAINTY = "uncertainty"
     
     # SQL Alchemy NetcdfVariable fields
     NAME = "name" # also for dimension table
@@ -180,15 +183,13 @@ class OceanSitesNetcdfParser:
             log.error(f"An unexpected error occurred while reading netcdf coordinate variables: {e}")
 
 
-        # Process QC and data variables next
+        # Process data and OceanSITES ancillary variables next
         try:
             for name, var in self.ds.data_vars.items():
-                if "qc" in name.lower():
-                    attribute_dict, required_fields = self.peel_out_required_var_attrs(dict(var.attrs), var_type="qc")
-                    var_type = self.QC
-                else:
-                    attribute_dict, required_fields = self.peel_out_required_var_attrs(dict(var.attrs), var_type="data")
-                    var_type = self.DATA
+                var_type = infer_special_variable_type(name) or self.DATA
+                attribute_dict, required_fields = self.peel_out_required_var_attrs(
+                    dict(var.attrs), var_type=var_type
+                )
                 var_info = {
                     self.NAME: name,
                     self.VAR_TYPE: var_type,
@@ -246,22 +247,38 @@ class OceanSitesNetcdfParser:
                 required_dict[self.FILL_VALUE] = attribute_dict.get("_FillValue")
                 attribute_dict.pop("_FillValue")
             if "flag_values" in attribute_dict.keys():
-                required_dict[self.FLAG_VALUES] = str(attribute_dict.get("flag_values")).replace('[', '').replace(']', '')
+                required_dict[self.FLAG_VALUES] = self._format_flag_values(
+                    attribute_dict.get("flag_values")
+                )
                 attribute_dict.pop("flag_values")
             if "flag_meanings" in attribute_dict.keys():
                 required_dict[self.FLAG_MEANINGS] = attribute_dict.get("flag_meanings")
                 attribute_dict.pop("flag_meanings")
+        elif var_type == "dm":
+            if "flag_values" in attribute_dict:
+                required_dict[self.FLAG_VALUES] = self._format_flag_values(
+                    attribute_dict.pop("flag_values")
+                )
+            if "flag_meanings" in attribute_dict:
+                required_dict[self.FLAG_MEANINGS] = attribute_dict.pop("flag_meanings")
+        elif var_type == "uncertainty":
+            if "units" in attribute_dict:
+                required_dict[self.UNITS] = attribute_dict.pop("units")
+            if "_FillValue" in attribute_dict:
+                required_dict[self.FILL_VALUE] = attribute_dict.pop("_FillValue")
 
 
         return attribute_dict, required_dict
-        
-            
-                
-            
-        
-       
 
-                    
-
-
-        
+    @staticmethod
+    def _format_flag_values(value) -> str:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if isinstance(value, (list, tuple)):
+            values = value
+        else:
+            values = [value]
+        return ", ".join(
+            item.decode() if isinstance(item, bytes) else str(item)
+            for item in values
+        )

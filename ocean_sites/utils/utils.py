@@ -14,6 +14,7 @@ from portal_core.utils import (
 )
 from sqlalchemy import select
 from ocean_sites.utils.metadata_diff import _coerce_enum, GLOBAL_ATTR_ENUM_FIELDS, VARIABLE_ENUM_FIELDS
+from ocean_sites.utils.variable_types import infer_special_variable_type
 
 GLOBAL_ATTRIBUTES = "global_attributes" # keys in nc parser dict
 OG_NETCDF_METADATA = "og_netcdf_metadata"
@@ -231,7 +232,10 @@ def _variable_row_to_dict(row: NetcdfVariable) -> dict:
     for field_name in VARIABLE_FIELDS:
         value = getattr(row, field_name)
         if field_name == "var_type":
-            var_dict[field_name] = _enum_value(value)
+            var_type = _enum_value(value)
+            if var_type == "data":
+                var_type = infer_special_variable_type(row.name) or var_type
+            var_dict[field_name] = var_type
         elif field_name == "dimensions":
             var_dict[field_name] = value.split(" ") if value else []
         elif field_name == "extra_attrs":
@@ -296,6 +300,8 @@ def load_original_ocean_sites_metadata(session, submission_id: str) -> Optional[
 
     # force string fields to be string fields else ui will see them as different (e.g. fill_value of -128 float vs. string)
     for var in og_dict["variables"]:
+        if var.get("var_type") == "data":
+            var["var_type"] = infer_special_variable_type(var.get("name")) or var["var_type"]
         for field_name in VARIABLE_STRING_FIELDS:
             if field_name in var and var[field_name] is not None:
                 var[field_name] = str(var[field_name])
@@ -428,6 +434,16 @@ def build_variables_list(
                 "fill_value": live_or_stored(fill_values_map, "fill_value"),
                 "flag_values": live_or_stored(flag_values_map, 'flag_values'),
                 "flag_meanings": live_or_stored(flag_meanings_map, 'flag_meanings'),
+            })
+        elif var_type == "dm":
+            variable_dict.update({
+                "flag_values": live_or_stored(flag_values_map, 'flag_values'),
+                "flag_meanings": live_or_stored(flag_meanings_map, 'flag_meanings'),
+            })
+        elif var_type == "uncertainty":
+            variable_dict.update({
+                "units": live_or_stored(units_map, 'units'),
+                "fill_value": live_or_stored(fill_values_map, 'fill_value'),
             })
         variables.append(variable_dict)
 

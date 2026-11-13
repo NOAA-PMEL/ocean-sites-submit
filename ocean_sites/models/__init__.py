@@ -9,6 +9,8 @@ from ocean_sites.models.ocean_sites import (
     NetcdfDataVariableSchema,
     NetcdfCoordinateVariableSchema,
     NetcdfQCVariableSchema,
+    NetcdfDMVariableSchema,
+    NetcdfUncertaintyVariableSchema,
     NetcdfDimension, 
 )
 
@@ -23,5 +25,7 @@ __all__ = [
     "NetcdfDataVariableSchema",
     "NetcdfCoordinateVariableSchema",
     "NetcdfQCVariableSchema",
+    "NetcdfDMVariableSchema",
+    "NetcdfUncertaintyVariableSchema",
     "NetcdfDimension", 
 ]

@@ -33,7 +33,9 @@ from ocean_sites.models import (
     NetcdfGlobalAttributesSchema,
     NetcdfDataVariableSchema,
     NetcdfCoordinateVariableSchema,
-    NetcdfQCVariableSchema
+    NetcdfQCVariableSchema,
+    NetcdfDMVariableSchema,
+    NetcdfUncertaintyVariableSchema
 )
 from ocean_sites.utils.metadata_diff import (
     _coerce_enum,
@@ -52,7 +54,9 @@ VARIABLE = "variable"
 _SCHEMA_BY_VAR_TYPE = {
     "data": NetcdfDataVariableSchema,
     "coordinate": NetcdfCoordinateVariableSchema,
-    "qc": NetcdfQCVariableSchema
+    "qc": NetcdfQCVariableSchema,
+    "dm": NetcdfDMVariableSchema,
+    "uncertainty": NetcdfUncertaintyVariableSchema
 }
 
 _QC_FLAG_VALUES = ("0", "1", "2", "3", "4", "7", "8", "9")
@@ -66,6 +70,9 @@ _QC_FLAG_MEANINGS = (
     "interpolated_value",
     "missing_value",
 )
+
+_DM_FLAG_VALUES = ("R", "P", "D", "M")
+_DM_FLAG_MEANINGS = ("real-time", "provisional", "delayed-mode", "mixed")
 
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
@@ -154,6 +161,9 @@ def _clean(d: dict) -> dict:
 def _clean_variable(var: dict) -> dict:
     """Blank-strip, then stringify the columsn the DB stores as text."""
     cleaned = _clean(var)
+    dimensions = cleaned.get("dimensions")
+    if isinstance(dimensions, (list, tuple)):
+        cleaned["dimensions"] = " ".join(str(dimension) for dimension in dimensions)
     for name in VARIABLE_STRING_FIELDS:
         value = cleaned.get(name)
         if value is not None and not isinstance(value, str):
@@ -308,9 +318,12 @@ def validate_metadata(current: dict, original: dict = None) -> list:
             for p in _problems_from_error(err, GLOBAL, _GLOBAL_LABELS, _GLOBAL_FIELDS):
                 add(p)
 
-    for var in current.get("variables") or []:
+    variables = current.get("variables") or []
+    for var in variables:
         for p in _validate_variable(var):
             add(p)
+    for p in _ancillary_variable_problems(variables):
+        add(p)
 
     return [asdict(p) for p in problems]
 
@@ -345,30 +358,121 @@ def _validate_variable(var: dict) -> list:
             )
         )
 
-    if var_type == "qc":
+    if var_type in ("qc", "dm"):
         flag_values = tuple(
             token
             for value in (cleaned_var.get("flag_values") or "").split(",")
             for token in value.split()
         )
         flag_meanings = tuple((cleaned_var.get("flag_meanings") or "").split())
+        expected_values, expected_meanings = (
+            (_QC_FLAG_VALUES, _QC_FLAG_MEANINGS)
+            if var_type == "qc"
+            else (_DM_FLAG_VALUES, _DM_FLAG_MEANINGS)
+        )
         if (
             flag_values
             and flag_meanings
-            and (flag_values != _QC_FLAG_VALUES or flag_meanings != _QC_FLAG_MEANINGS)
+            and (flag_values != expected_values or flag_meanings != expected_meanings)
         ):
+            label = "QC" if var_type == "qc" else "DM"
             problems.append(Problem(
                 scope=VARIABLE,
                 var_name=name,
                 field="flag_values",
                 message=(
-                    "QC flag values and meanings must match the required mapping: "
-                    f"{', '.join(_QC_FLAG_VALUES)} maps in order to "
-                    f"{' '.join(_QC_FLAG_MEANINGS)}."
+                    f"{label} flag values and meanings must match the required mapping: "
+                    f"{', '.join(expected_values)} maps in order to "
+                    f"{' '.join(expected_meanings)}."
                 ),
                 also_fields=("flag_meanings",),
             ))
 
+    if var_type == "dm":
+        dtype = str(cleaned_var.get("dtype") or "").lower()
+        if dtype not in {"|s1", "s1", "char"}:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dtype",
+                message="DM variables must use the NetCDF Char datatype.",
+            ))
+        extra_attrs = cleaned_var.get("extra_attrs")
+        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
+        if long_name != "data mode":
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="extra_attrs",
+                message='DM variables must have long_name set to "data mode".',
+            ))
+
+    if var_type == "uncertainty":
+        dtype = str(cleaned_var.get("dtype") or "").lower()
+        if dtype not in {"float32", "f4"}:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dtype",
+                message="Uncertainty variables must use the NetCDF Float datatype.",
+            ))
+        extra_attrs = cleaned_var.get("extra_attrs")
+        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
+        if not isinstance(long_name, str) or not long_name.strip():
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="extra_attrs",
+                message="Uncertainty variables require a long_name attribute.",
+            ))
+
+    return problems
+
+
+def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
+    by_name = {str(var.get("name") or "").casefold(): var for var in variables}
+    problems = []
+
+    def dimension_names(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value)
+        return tuple(str(value or "").split())
+
+    for var in variables:
+        var_type = var.get("var_type")
+        if var_type not in ("dm", "uncertainty"):
+            continue
+
+        name = str(var.get("name") or "")
+        suffix = "_DM" if var_type == "dm" else "_UNCERTAINTY"
+        parameter_name = name[:-len(suffix)] if name.upper().endswith(suffix) else ""
+        parameter = by_name.get(parameter_name.casefold())
+        if parameter is None or parameter.get("var_type") != "data":
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message=f"A {var_type.upper()} variable must have a matching data variable.",
+            ))
+            continue
+
+        if dimension_names(var.get("dimensions")) != dimension_names(parameter.get("dimensions")):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message="Ancillary variable dimensions must match the paired data variable.",
+            ))
+        if (
+            var_type == "uncertainty"
+            and _blank_to_none(var.get("units")) != _blank_to_none(parameter.get("units"))
+        ):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="units",
+                message="Uncertainty units must match the paired data variable.",
+            ))
     return problems
 
 # --------------------------------------------------------------

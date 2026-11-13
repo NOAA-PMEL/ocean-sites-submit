@@ -282,13 +282,17 @@ class VarType(str, enum.Enum):
     DATA = "data"
     COORDINATE = "coordinate"
     QC = "qc"
+    DM = "dm"
+    UNCERTAINTY = "uncertainty"
     
     @property
     def label(self):
         labels = {
             "data": "Data Variable",
             "coordinate": "Coordinate Variable",
-            "qc": "QC Variable"
+            "qc": "QC Variable",
+            "dm": "DM Variable",
+            "uncertainty": "Uncertainty Variable"
         }
         return labels[self.value]
 
@@ -411,6 +415,17 @@ class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     flag_values: str
     flag_meanings: str
 
+class NetcdfDMVariableSchema(NetcdfVariableBaseSchema):
+    """Strict schema for data-mode variables"""
+    var_type: VarType = VarType.DM
+    flag_values: str
+    flag_meanings: str
+
+class NetcdfUncertaintyVariableSchema(NetcdfVariableBaseSchema):
+    """Strict schema for uncertainty variables"""
+    var_type: VarType = VarType.UNCERTAINTY
+    units: str
+    fill_value: float
 
 class OceanSitesOadsMetadataSchema(OadsMetadataSchema):
     netcdf_global_attributes: Optional[list[NetcdfGlobalAttributesSchema]] = []

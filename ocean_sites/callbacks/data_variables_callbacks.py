@@ -16,13 +16,17 @@ _VAR_TYPE_COLORS = {
     'all': '#4f8ef7',
     'data': '#b968e0',
     'coordinate': '#38d9a9',
-    'qc': '#f7b44f'
-                    }
+    'qc': '#f7b44f',
+    'dm': '#63a6ff',
+    'uncertainty': '#d58aff'
+}
 _VAR_TYPE_LABLES = {
     'all': 'total',
     'data': 'data',
     'coordinate': 'coordinate',
-    'qc': 'QC'
+    'qc': 'QC',
+    'dm': 'DM',
+    'uncertainty': 'uncertainty'
 }
 def register_callbacks(app):
 
@@ -523,6 +527,7 @@ def register_callbacks(app):
     @app.callback(
         Output({'type': 'nc-var-field-err', 'index': ALL, 'field': ALL}, 'children'),
         Output({'type': 'nc-var-field-wrap', 'index': ALL, 'field': ALL}, 'className'),
+        Output({'type': 'nc-var-record-err', 'index': ALL}, 'children'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
@@ -537,6 +542,7 @@ def register_callbacks(app):
 
         err_ids = [m['id'] for m in ctx.outputs_list[0]]
         wrap_ids = [m['id']for m in ctx.outputs_list[1]]
+        record_ids = [m['id'] for m in ctx.outputs_list[2]]
 
         def _lookup(id_):
             return by_name.get(name_by_uid.get(id_['index']), {}).get(id_['field'])
@@ -551,7 +557,21 @@ def register_callbacks(app):
             p = _lookup(id_)
             classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
 
-        return children, classes
+        visible_fields = {
+            'standard_name', 'units', 'fill_value', 'coordinates', 'axis',
+            'flag_values', 'flag_meanings',
+        }
+        record_errors = []
+        for id_ in record_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field_problems = by_name.get(var_name, {})
+            record_errors.append([
+                _err_text(problem['message'], problem['severity'])
+                for field, problem in field_problems.items()
+                if field not in visible_fields
+            ])
+
+        return children, classes, record_errors
 
 
 
