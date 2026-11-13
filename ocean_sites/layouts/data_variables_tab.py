@@ -282,7 +282,7 @@ def _attr_inputs_for_type(uid: str, var_type: str, attributes: dict):
     Read-only structural fields (dtype, shape, dimensions) render as plain text.
     """
     def _field(label, component, span=1, field_key=None):
-        style = {'gridColumns': f'span {span}'} if span > 1 else {}
+        style = {'gridColumn': f'span {span}'} if span > 1 else {}
 
         if not field_key:
             return html.Div(style=style, children=[html.Label(label, style=_label_style), component])

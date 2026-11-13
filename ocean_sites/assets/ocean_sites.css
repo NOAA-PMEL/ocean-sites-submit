@@ -7,11 +7,13 @@
 .nc-field-err:empty { display: none; }
 
 .nc-field-wrap.is-error input,
+.nc-field-wrap.is-error textarea,
 .nc-field-wrap.is-error .Select-control {
     border-color: rgba(255, 77, 77, 0.7) !important;
     background-color: rgba(42, 18, 21, 0.3) !important; /* Semi-translucent dark crimson */
 }
 .nc-field-wrap.is-warning input,
+.nc-field-wrap.is-warning textarea,
 .nc-field-wrap.is-warning .Select-control {
     border-color: rgba(247, 180, 79, .55) !important;
     background-color: rgba(247, 180, 79, .04) !important;

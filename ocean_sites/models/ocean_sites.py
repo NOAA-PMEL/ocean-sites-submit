@@ -406,8 +406,8 @@ class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
 class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for QC variables"""
     var_type: VarType = VarType.QC
-    units: str
-    fill_value: str
+    units: Optional[str] = None
+    fill_value: Optional[str] = None
     flag_values: str
     flag_meanings: str
 

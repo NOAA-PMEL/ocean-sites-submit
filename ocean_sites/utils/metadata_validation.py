@@ -55,6 +55,18 @@ _SCHEMA_BY_VAR_TYPE = {
     "qc": NetcdfQCVariableSchema
 }
 
+_QC_FLAG_VALUES = ("0", "1", "2", "3", "4", "7", "8", "9")
+_QC_FLAG_MEANINGS = (
+    "unknown",
+    "good_data",
+    "probably_good_data",
+    "potentially_correctable_bad_data",
+    "bad_data",
+    "nominal_value",
+    "interpolated_value",
+    "missing_value",
+)
+
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
     "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
@@ -320,17 +332,44 @@ def _validate_variable(var: dict) -> list:
             valid_options=list(_SCHEMA_BY_VAR_TYPE)
         )]
 
+    cleaned_var = _clean_variable(var)
+    problems = []
     try:
-        schema.model_validate(_clean_variable(var))
+        schema.model_validate(cleaned_var)
     except ValidationError as exc:
-        return [
+        problems.extend(
             p
             for err in exc.errors()
             for p in _problems_from_error(
                 err, VARIABLE, _VARIABLE_LABELS, _VARIABLE_FIELDS, var_name=name
             )
-        ]
-    return []
+        )
+
+    if var_type == "qc":
+        flag_values = tuple(
+            token
+            for value in (cleaned_var.get("flag_values") or "").split(",")
+            for token in value.split()
+        )
+        flag_meanings = tuple((cleaned_var.get("flag_meanings") or "").split())
+        if (
+            flag_values
+            and flag_meanings
+            and (flag_values != _QC_FLAG_VALUES or flag_meanings != _QC_FLAG_MEANINGS)
+        ):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="flag_values",
+                message=(
+                    "QC flag values and meanings must match the required mapping: "
+                    f"{', '.join(_QC_FLAG_VALUES)} maps in order to "
+                    f"{' '.join(_QC_FLAG_MEANINGS)}."
+                ),
+                also_fields=("flag_meanings",),
+            ))
+
+    return problems
 
 # --------------------------------------------------------------
 # Read helpers for the UI layer
