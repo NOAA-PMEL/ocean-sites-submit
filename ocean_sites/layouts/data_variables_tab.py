@@ -119,6 +119,14 @@ def _var_err_pill_style():
         'boxShadow': '0 1px 3px rgba(0,0,0,0.3)'    # Gives elevation over header bar background
     }
 
+def _var_warn_pill_style():
+    return {
+        **_var_err_pill_style(),
+        'color': '#f7b44f',
+        'backgroundColor': 'rgba(247, 180, 79, .1)',
+        'border': '1px solid rgba(247, 180, 79, .45)',
+    }
+
 # ----------------------------------------------------------
 # Imported Variable Card
 # ----------------------------------------------------------
@@ -261,6 +269,11 @@ def _imported_var_card(uid: str, name: str, var_type: str, dtype: str,
                         children=[
                             html.Span(
                                 id={'type': 'nc-var-err-count', 'index': uid},
+                                style={'display': 'none'},
+                                children=[],
+                            ),
+                            html.Span(
+                                id={'type': 'nc-var-warn-count', 'index': uid},
                                 style={'display': 'none'},
                                 children=[],
                             ),

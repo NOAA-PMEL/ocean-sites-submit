@@ -10,6 +10,7 @@ from ocean_sites.utils.utils import (
 from ocean_sites.utils.metadata_validation import (
     global_problems_by_field,
      error_count_by_variable, 
+     warning_count_by_variable,
      variable_problems_by_name,
      validate_metadata,
      GLOBAL, 
@@ -29,6 +30,7 @@ __all__ = [
     "_format_value_for_ui", 
     "global_problems_by_field",
     "error_count_by_variable", 
+    "warning_count_by_variable",
     "variable_problems_by_name",
     "_visible_problems",
     "build_metadata_diff", 

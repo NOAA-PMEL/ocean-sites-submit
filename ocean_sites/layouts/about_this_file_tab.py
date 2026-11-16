@@ -235,6 +235,7 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
     action_button = html.Button(btn_text, id=action_id, n_clicks=0, style=btn_style)
     value_input = dcc.Input(
         id=value_id,
+        className='nc-var-extra-attr-value' if var_uid is not None else None,
         type='text',
         value=value,
         placeholder='value',

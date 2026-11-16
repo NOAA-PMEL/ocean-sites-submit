@@ -7,14 +7,22 @@
 .nc-field-err:empty { display: none; }
 
 .nc-field-wrap.is-error input,
-.nc-field-wrap.is-error textarea,
 .nc-field-wrap.is-error .Select-control {
     border-color: rgba(255, 77, 77, 0.7) !important;
     background-color: rgba(42, 18, 21, 0.3) !important; /* Semi-translucent dark crimson */
 }
 .nc-field-wrap.is-warning input,
-.nc-field-wrap.is-warning textarea,
 .nc-field-wrap.is-warning .Select-control {
+    border-color: rgba(247, 180, 79, .55) !important;
+    background-color: rgba(247, 180, 79, .04) !important;
+}
+
+.nc-var-extra-attr-value.is-error {
+    border-color: rgba(255, 77, 77, 0.7) !important;
+    background-color: rgba(42, 18, 21, 0.3) !important;
+}
+
+.nc-var-extra-attr-value.is-warning {
     border-color: rgba(247, 180, 79, .55) !important;
     background-color: rgba(247, 180, 79, .04) !important;
 }
@@ -29,4 +37,13 @@
 
 .nc-var-card.has-errors .nc-var-card-hd {
     background-color: rgba(42, 18, 21, 0.4) !important; /* Dark crimson header block tint */
+}
+
+.nc-var-card.has-warnings {
+    border-color: rgba(247, 180, 79, .55) !important;
+    box-shadow: 0 0 4px rgba(247, 180, 79, .15);
+}
+
+.nc-var-card.has-warnings .nc-var-card-hd {
+    background-color: rgba(45, 37, 22, .45) !important;
 }

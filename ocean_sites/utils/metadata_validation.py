@@ -74,6 +74,18 @@ _QC_FLAG_MEANINGS = (
 _DM_FLAG_VALUES = ("R", "P", "D", "M")
 _DM_FLAG_MEANINGS = ("real-time", "provisional", "delayed-mode", "mixed")
 
+_HORIZONTAL_COORDINATE_REFERENCE_FRAME = "urn:ogc:def:crs:EPSG::4326"
+_VERTICAL_COORDINATE_REFERENCE_FRAMES = {
+    "down": "urn:ogc:def:crs:EPSG::5831",
+    "up": "urn:ogc:def:crs:EPSG::5829",
+}
+_VERTICAL_REFERENCES = (
+    "sea_level",
+    "mean_sea_level",
+    "mean_lower_low_water",
+    "wgs84_geoid",
+)
+
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
     "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
@@ -360,6 +372,9 @@ def _validate_variable(var: dict) -> list:
             )
         )
 
+    if var_type == "coordinate":
+        problems.extend(_coordinate_axis_problems(name, cleaned_var))
+        
     if var_type in ("qc", "dm"):
         flag_values = tuple(
             token
@@ -427,6 +442,101 @@ def _validate_variable(var: dict) -> list:
                 field="extra_attrs",
                 message="Uncertainty variables require a long_name attribute.",
             ))
+
+    return problems
+
+def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
+    axis = str(var.get("axis") or "").strip().upper()
+    if axis not in {"X", "Y", "Z"}:
+        return []
+
+    extra_attrs = var.get("extra_attrs")
+    attrs = extra_attrs if isinstance(extra_attrs, dict) else {}
+
+    def attr_value(field):
+        value = attrs.get(field)
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        return value.strip() if isinstance(value, str) else None
+
+    def attr_is_present(field):
+        value = attrs.get(field)
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+    problems = []
+
+    if axis in {"X", "Y"}:
+        expected_attrs = {
+            "coordinate_reference_frame": _HORIZONTAL_COORDINATE_REFERENCE_FRAME,
+            "reference": "WGS84",
+        }
+        for field, expected in expected_attrs.items():
+            if attr_is_present(field) and attr_value(field) != expected:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=field,
+                    severity=WARNING,
+                    message=(
+                        f"{axis} coordinate variables should use {field}={expected!r}."
+                    ),
+                    valid_options=[expected],
+                ))
+        return problems
+
+    positive_present = attr_is_present("positive")
+    positive = attr_value("positive")
+    if positive_present and positive not in _VERTICAL_COORDINATE_REFERENCE_FRAMES:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="positive",
+            severity=WARNING,
+            message="Z coordinate variables should use positive='up' or 'down'.",
+            valid_options=["up", "down"],
+        ))
+
+    frame_present = attr_is_present("coordinate_reference_frame")
+    frame = attr_value("coordinate_reference_frame")
+    if frame_present:
+        expected_frame = _VERTICAL_COORDINATE_REFERENCE_FRAMES.get(positive)
+        valid_frames = list(_VERTICAL_COORDINATE_REFERENCE_FRAMES.values())
+        if frame not in valid_frames or (
+            expected_frame is not None and frame != expected_frame
+        ):
+            message = (
+                f"Z coordinates with positive={positive!r} should use "
+                f"coordinate_reference_frame={expected_frame!r}."
+                if expected_frame is not None
+                else (
+                    "Z coordinate variables should use a valid "
+                    "coordinate_reference_frame."
+                )
+            )
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="coordinate_reference_frame",
+                severity=WARNING,
+                message=message,
+                valid_options=[expected_frame] if expected_frame else valid_frames,
+            ))
+
+    reference = attr_value("reference")
+    if attr_is_present("reference") and reference not in _VERTICAL_REFERENCES:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="reference",
+            severity=WARNING,
+            message=(
+                "Z coordinate variables should use reference from: "
+                f"{', '.join(_VERTICAL_REFERENCES)}."
+            ),
+            valid_options=list(_VERTICAL_REFERENCES),
+        ))
 
     return problems
 
@@ -549,13 +659,22 @@ def global_problems_by_field(problems: list) -> dict:
 def variable_problems_by_name(problems: list) -> dict:
     """{var_name: {field_name: problem}} -- keyed to match nc-vars-store names"""
     out: dict = {}
+
+    def add_problem(fields: dict, field: str, problem: dict) -> None:
+        existing = fields.get(field)
+        if (
+            existing is None
+            or (existing["severity"] == WARNING and problem["severity"] == ERROR)
+        ):
+            fields[field] = problem
+
     for p in problems or []:
         if p["scope"] != VARIABLE:
             continue
         fields = out.setdefault(p["var_name"], {})
-        fields.setdefault(p["field"], p)
+        add_problem(fields, p["field"], p)
         for other in p.get("also_fields") or ():
-            fields.setdefault(other, p)
+            add_problem(fields, other, p)
     return out
 
 def error_count_by_variable(problems: list) -> dict:
@@ -563,6 +682,15 @@ def error_count_by_variable(problems: list) -> dict:
     counts: dict = {}
     for p in problems or []:
         if p["scope"] == VARIABLE and p["severity"] == ERROR:
+            counts[p["var_name"]] = counts.get(p["var_name"], 0) + 1
+
+    return counts
+
+def warning_count_by_variable(problems: list) -> dict:
+    """{var_name: n} -- drives the warning count pill on a variable card."""
+    counts: dict = {}
+    for p in problems or []:
+        if p["scope"] == VARIABLE and p["severity"] == WARNING:
             counts[p["var_name"]] = counts.get(p["var_name"], 0) + 1
 
     return counts
