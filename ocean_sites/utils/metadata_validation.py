@@ -118,6 +118,12 @@ _COORDINATE_VALID_RANGES = {
     "Z": {"valid_min": 0.0, "valid_max": 12000.0},
 }
 
+_SPATIAL_AXIS_MIN_FIELDS = {
+    "X": "geospatial_lon_min",
+    "Y": "geospatial_lat_min",
+    "Z": "geospatial_vertical_min",
+}
+
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
     "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
@@ -142,20 +148,64 @@ _BOUND_PAIRS = (
 )
 
 # --------------------------------------------------------------
-# For lat/lon min/max problems (won't catch without this because of how pydantic works)
+# For spatial min/max problems that must be checked even when another field fails.
 # TODO: figure out times (right now are strs in DB, if want to include start/end time, need
 # to make this a datetime and fix downstream)
 # --------------------------------------------------------------
-def _cross_field_problems(g: dict) -> list:
+def _singleton_spatial_bounds(current: dict) -> set:
+    dimension_sizes = {
+        dimension.get("name"): dimension.get("size")
+        for dimension in current.get("dimensions") or []
+        if isinstance(dimension, dict) and dimension.get("name") is not None
+    }
+    dimensions_by_axis = {axis: set() for axis in _SPATIAL_AXIS_MIN_FIELDS}
+    for variable in current.get("variables") or []:
+        if not isinstance(variable, dict):
+            continue
+        axis = variable.get("axis")
+        if not isinstance(axis, str):
+            continue
+        axis = axis.strip().upper()
+        if axis not in dimensions_by_axis:
+            continue
+
+        dimensions = variable.get("dimensions")
+        if isinstance(dimensions, str):
+            dimensions = dimensions.split()
+        if isinstance(dimensions, (list, tuple)):
+            dimensions_by_axis[axis].update(
+                name for name in dimensions if isinstance(name, str)
+            )
+
+    return {
+        _SPATIAL_AXIS_MIN_FIELDS[axis]
+        for axis, dimension_names in dimensions_by_axis.items()
+        if dimension_names and all(
+            isinstance(dimension_sizes.get(name), int)
+            and not isinstance(dimension_sizes.get(name), bool)
+            and 0 <= dimension_sizes[name] <= 1
+            for name in dimension_names
+        )
+    }
+
+def _cross_field_problems(
+    g: dict, allow_equal_bounds: Optional[set] = None
+) -> list:
     """
     Here rather than in the pydantic shcema because a mode_validator(mode='after')
     only runs once every field has validated -- one bad data_mode and the bounds would 
     never get checked
     """
     out = []
+    allow_equal_bounds = allow_equal_bounds or set()
     for lo, hi in _BOUND_PAIRS:
         a, b = g.get(lo), g.get(hi)
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)) and a >= b:
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            invalid_bounds = a >= b
+            if lo in allow_equal_bounds and a == b:
+                invalid_bounds = False
+            if not invalid_bounds:
+                continue
             out.append(Problem(
                 scope=GLOBAL, field=hi,
                 message=f"Must be greater than the minimum ({a}).",
@@ -346,17 +396,21 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     current = current or {}
     globals_clean = _clean(current.get("global_attributes") or {})
     original_globals = (original or {}).get("global_attributes") or {}
+    allow_equal_bounds = _singleton_spatial_bounds(current)
 
     # Enum-loss first, so its message besats the generic "is reqwuired"
     for p in _enum_loss_problems(globals_clean, original_globals):
         add(p)
 
     # Cross-field next-- these run whether or not the field checks pass
-    for p in _cross_field_problems(globals_clean):
+    for p in _cross_field_problems(globals_clean, allow_equal_bounds):
         add(p)
 
     try:
-        NetcdfGlobalAttributesSchema.model_validate(globals_clean)
+        NetcdfGlobalAttributesSchema.model_validate(
+            globals_clean,
+            context={"allow_equal_bounds": allow_equal_bounds},
+        )
     except ValidationError as exc:
         for err in exc.errors():
             for p in _problems_from_error(err, GLOBAL, _GLOBAL_LABELS, _GLOBAL_FIELDS):
