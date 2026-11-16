@@ -86,6 +86,13 @@ _VERTICAL_REFERENCES = (
     "wgs84_geoid",
 )
 
+_COORDINATE_VALID_RANGES = {
+    "T": {"valid_min": 0.0, "valid_max": 90000.0},
+    "Y": {"valid_min": -90.0, "valid_max": 90.0},
+    "X": {"valid_min": -180.0, "valid_max": 180.0},
+    "Z": {"valid_min": 0.0, "valid_max": 12000.0},
+}
+
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
     "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
@@ -447,7 +454,7 @@ def _validate_variable(var: dict) -> list:
 
 def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
     axis = str(var.get("axis") or "").strip().upper()
-    if axis not in {"X", "Y", "Z"}:
+    if axis not in _COORDINATE_VALID_RANGES:
         return []
 
     extra_attrs = var.get("extra_attrs")
@@ -465,7 +472,39 @@ def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
             value = value.decode(errors="replace")
         return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
+    def attr_number(field):
+        value = attrs.get(field)
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
+
     problems = []
+
+    for field, expected in _COORDINATE_VALID_RANGES[axis].items():
+        if not attr_is_present(field):
+            continue
+        actual = attr_number(field)
+        if actual is None or actual != expected:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=field,
+                severity=WARNING,
+                message=(
+                    f"{axis} coordinate variables should use "
+                    f"{field}={expected}."
+                ),
+                valid_options=[expected],
+            ))
+
+    if axis == "T":
+        return problems
 
     if axis in {"X", "Y"}:
         expected_attrs = {

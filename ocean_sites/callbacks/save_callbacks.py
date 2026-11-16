@@ -42,7 +42,6 @@ _SCOPE_BY_TAB = {
 }
 
 _COUNT_STYLE = {
-    'marginLeft': 'auto',
     'fontSize': '9.5px', 
     'fontWeight': '700',
     'padding': '1px 6px',
@@ -51,6 +50,13 @@ _COUNT_STYLE = {
     'color': '#ff4d4d',                         # Vibrant high-contrast error crimson
     'backgroundColor': '#2a1215',               # Dark crimson solid background container
     'border': '1px solid rgba(255, 77, 77, 0.4)' # Translucent red accent border matching the cards
+}
+
+_WARNING_COUNT_STYLE = {
+    **_COUNT_STYLE,
+    'color': '#f7b44f',
+    'backgroundColor': 'rgba(247, 180, 79, .1)',
+    'border': '1px solid rgba(247, 180, 79, .45)',
 }
 
 def register_callbacks(app):
@@ -603,6 +609,8 @@ def register_callbacks(app):
     @app.callback(
         Output({'type': 'sidebar-tab-count', 'index': ALL}, 'children'),
         Output({'type': 'sidebar-tab-count', 'index': ALL}, 'style'),
+        Output({'type': 'sidebar-tab-warning-count', 'index': ALL}, 'children'),
+        Output({'type': 'sidebar-tab-warning-count', 'index': ALL}, 'style'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
@@ -610,19 +618,35 @@ def register_callbacks(app):
     )
     def update_sidebar_counts(problems, mode, submission_id):
         loud = bool(submission_id) and (mode or {}).get('loud_for') == submission_id
-        if not loud:
-            problems = [p for p in (problems or []) if p['kind'] == 'missing']
+        all_problems = problems or []
+        counted_errors = (
+            all_problems
+            if loud
+            else [p for p in all_problems if p['kind'] == 'missing']
+        )
 
-        counts = {}
-        for p in problems or []:
+        error_counts = {}
+        for p in counted_errors:
             if p['severity'] != 'error':
                 continue
-            counts[p['scope']] = counts.get(p['scope'], 0) + 1
+            error_counts[p['scope']] = error_counts.get(p['scope'], 0) + 1
 
-        children, styles = [], []
+        warning_counts = {}
+        for p in all_problems:
+            if p['severity'] != 'warning':
+                continue
+            warning_counts[p['scope']] = warning_counts.get(p['scope'], 0) + 1
+
+        error_children, error_styles = [], []
         for match in ctx.outputs_list[0]:
-            n = counts.get(_SCOPE_BY_TAB.get(match['id']['index']), 0)
-            children.append(str(n) if n else [])
-            styles.append(_COUNT_STYLE if n else {'display': 'none'})
+            n = error_counts.get(_SCOPE_BY_TAB.get(match['id']['index']), 0)
+            error_children.append(str(n) if n else [])
+            error_styles.append(_COUNT_STYLE if n else {'display': 'none'})
 
-        return children, styles
+        warning_children, warning_styles = [], []
+        for match in ctx.outputs_list[2]:
+            n = warning_counts.get(_SCOPE_BY_TAB.get(match['id']['index']), 0)
+            warning_children.append(str(n) if n else [])
+            warning_styles.append(_WARNING_COUNT_STYLE if n else {'display': 'none'})
+
+        return error_children, error_styles, warning_children, warning_styles
