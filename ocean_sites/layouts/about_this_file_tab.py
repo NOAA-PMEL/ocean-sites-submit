@@ -233,6 +233,46 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
 
     # Render a single button container element
     action_button = html.Button(btn_text, id=action_id, n_clicks=0, style=btn_style)
+    value_input = dcc.Input(
+        id=value_id,
+        className='nc-var-extra-attr-value' if var_uid is not None else 'nc-extra-attr-value',
+        type='text',
+        value=value,
+        placeholder='value',
+        debounce=True,
+        disabled=removed,
+        style={
+            **_input_style,
+            'flex': '2',
+            'fontSize': '12px',
+            **strike
+        },
+    )
+    if var_uid is not None:
+        value_input = html.Div(
+            style={'display': 'flex', 'flexDirection': 'column', 'flex': '2', 'minWidth': 0},
+            children=[
+                value_input,
+                html.Div(
+                    id={'type': 'nc-var-extra-attr-err', 'index': var_uid, 'attr_uid': uid},
+                    className='nc-field-err',
+                    children=[],
+                ),
+            ],
+        )
+    else:
+        value_input = html.Div(
+            style={'display': 'flex', 'flexDirection': 'column', 'flex': '2', 'minWidth': 0},
+            children=[
+                value_input,
+                html.Div(
+                    id={'type': 'nc-extra-attr-err', 'index': uid},
+                    className='nc-field-err',
+                    children=[],
+                ),
+            ],
+        )
+
     return [
         dot,
         dcc.Input(
@@ -250,20 +290,7 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
                 **strike
             },
         ),
-        dcc.Input(
-            id=value_id,
-            type='text',
-            value=value,
-            placeholder='value',
-            debounce=True,
-            disabled=removed,
-            style={
-                **_input_style,
-                'flex': '2',
-                'fontSize': '12px',
-                **strike
-            },
-        ),
+        value_input,
         html.Span(
             className='nc-field-dot',
             style=diff_badge_style('removed'),

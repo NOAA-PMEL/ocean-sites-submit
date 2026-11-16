@@ -8,7 +8,14 @@ from sqlalchemy import Boolean, DateTime, String, ForeignKey, Enum, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship, backref
 from sqlalchemy.dialects.postgresql import JSONB
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from portal_core.models import Base, OadsMetadataSchema
 
 #TODO: does shape field need to be in the netcdfVariable table? 
@@ -56,8 +63,9 @@ data_type_db_enum = Enum(
 
 class FormatVersion(str, enum.Enum):
     V1_1 = "1.1"
+    V1_2 = "1.2"
     V1_3 = "1.3"
-    V1_5 = "1.5"
+    V1_4 = "1.4"
 
     @property
     def label(self):
@@ -228,10 +236,17 @@ class NetcdfGlobalAttributesSchema(BaseModel):
         return v
             
     @model_validator(mode="after")
-    def check_spatial_bounds(self):
-        if self.geospatial_lat_min >= self.geospatial_lat_max:
+    def check_spatial_bounds(self, info: ValidationInfo):
+        allow_equal_bounds = set((info.context or {}).get("allow_equal_bounds", ()))
+        if self.geospatial_lat_min > self.geospatial_lat_max or (
+            self.geospatial_lat_min == self.geospatial_lat_max
+            and "geospatial_lat_min" not in allow_equal_bounds
+        ):
             raise ValueError("geospatial_lat_min must be less than geospatial_lat_max")
-        if self.geospatial_lon_min >= self.geospatial_lon_max:
+        if self.geospatial_lon_min > self.geospatial_lon_max or (
+            self.geospatial_lon_min == self.geospatial_lon_max
+            and "geospatial_lon_min" not in allow_equal_bounds
+        ):
             raise ValueError("geospatial_lon_min must be less than geospatial_lon_max")
         return self
 
@@ -274,21 +289,31 @@ class NetcdfDimensionSchema(BaseModel):
 
     id: Optional[int]
     name: str
-    size: int = Field(..., gt=0)
+    size: int = Field(..., ge=0)
     unlimited: bool = False
+
+    @model_validator(mode="after")
+    def validate_zero_size_dimension(self):
+        if self.size == 0 and not self.unlimited:
+            raise ValueError("A zero-size dimension must be unlimited")
+        return self
 
     
 class VarType(str, enum.Enum):
     DATA = "data"
     COORDINATE = "coordinate"
     QC = "qc"
+    DM = "dm"
+    UNCERTAINTY = "uncertainty"
     
     @property
     def label(self):
         labels = {
             "data": "Data Variable",
             "coordinate": "Coordinate Variable",
-            "qc": "QC Variable"
+            "qc": "QC Variable",
+            "dm": "DM Variable",
+            "uncertainty": "Uncertainty Variable"
         }
         return labels[self.value]
 
@@ -406,11 +431,22 @@ class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
 class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for QC variables"""
     var_type: VarType = VarType.QC
-    units: str
-    fill_value: str
+    units: Optional[str] = None
+    fill_value: Optional[str] = None
     flag_values: str
     flag_meanings: str
 
+class NetcdfDMVariableSchema(NetcdfVariableBaseSchema):
+    """Strict schema for data-mode variables"""
+    var_type: VarType = VarType.DM
+    flag_values: str
+    flag_meanings: str
+
+class NetcdfUncertaintyVariableSchema(NetcdfVariableBaseSchema):
+    """Strict schema for uncertainty variables"""
+    var_type: VarType = VarType.UNCERTAINTY
+    units: str
+    fill_value: float
 
 class OceanSitesOadsMetadataSchema(OadsMetadataSchema):
     netcdf_global_attributes: Optional[list[NetcdfGlobalAttributesSchema]] = []

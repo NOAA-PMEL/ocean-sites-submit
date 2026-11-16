@@ -128,9 +128,23 @@ def create_changes_ledger():
     )
 
 def create_tab_count_badge(tab):
-    # In the metadata modal to create the tab counts part in the layout
     return html.Span(
-            id={'type': 'sidebar-tab-count', 'index': tab['id']}, 
-            style={'display': 'none'},
-            children=[],
+        style={
+            'display': 'inline-flex',
+            'alignItems': 'center',
+            'gap': '4px',
+            'marginLeft': 'auto',
+        },
+        children=[
+            html.Span(
+                id={'type': 'sidebar-tab-count', 'index': tab['id']},
+                style={'display': 'none'},
+                children=[],
+            ),
+            html.Span(
+                id={'type': 'sidebar-tab-warning-count', 'index': tab['id']},
+                style={'display': 'none'},
+                children=[],
+            ),
+        ],
         )

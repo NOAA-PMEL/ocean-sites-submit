@@ -3,26 +3,36 @@ from dash.exceptions import PreventUpdate
 from ocean_sites.layouts import (
     _var_card_body_children, 
     _var_err_pill_style,
+    _var_warn_pill_style,
     _extra_attr_row, 
     _extra_attr_row_children, 
     diff_badge_children, 
     diff_badge_style, 
     _err_text
 )
-from ocean_sites.utils import error_count_by_variable, variable_problems_by_name, _visible_problems
+from ocean_sites.utils import (
+    error_count_by_variable,
+    warning_count_by_variable,
+    variable_problems_by_name,
+    _visible_problems,
+)
 import uuid
 
 _VAR_TYPE_COLORS = {
     'all': '#4f8ef7',
     'data': '#b968e0',
     'coordinate': '#38d9a9',
-    'qc': '#f7b44f'
-                    }
+    'qc': '#f7b44f',
+    'dm': '#63a6ff',
+    'uncertainty': '#d58aff'
+}
 _VAR_TYPE_LABLES = {
     'all': 'total',
     'data': 'data',
     'coordinate': 'coordinate',
-    'qc': 'QC'
+    'qc': 'QC',
+    'dm': 'DM',
+    'uncertainty': 'uncertainty'
 }
 def register_callbacks(app):
 
@@ -479,6 +489,8 @@ def register_callbacks(app):
     @app.callback(
         Output({'type': 'nc-var-err-count', 'index': ALL}, 'children'),
         Output({'type': 'nc-var-err-count', 'index': ALL}, 'style'),
+        Output({'type': 'nc-var-warn-count', 'index': ALL}, 'children'),
+        Output({'type': 'nc-var-warn-count', 'index': ALL}, 'style'),
         Output({'type': 'nc-var-card', 'index': ALL}, 'className'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
@@ -488,55 +500,86 @@ def register_callbacks(app):
     )
     def update_var_card_errors(problems, mode, submission_id, vars_store):
         """
-        The count on a collapsed header. Card bodies mount lazily, so without
-        this an error inside a collapsed card would be invisible. 
+        Severity counts stay visible on collapsed cards whose bodies mount lazily.
         """
         problems = _visible_problems(problems, mode, submission_id)
-        counts = error_count_by_variable(problems)
+        error_counts = error_count_by_variable(problems)
+        warning_counts = warning_count_by_variable(problems)
         name_by_uid = {v['uid']: v.get('name') for v in (vars_store or [])}
 
-        pill_uids = [m['id']['index'] for m in ctx.outputs_list[0]]
-        card_uids = [m['id']['index'] for m in ctx.outputs_list[2]]
+        error_pill_uids = [m['id']['index'] for m in ctx.outputs_list[0]]
+        warning_pill_uids = [m['id']['index'] for m in ctx.outputs_list[2]]
+        card_uids = [m['id']['index'] for m in ctx.outputs_list[4]]
 
-        children, styles = [], []
-        for uid in pill_uids:
+        error_children, error_styles = [], []
+        for uid in error_pill_uids:
             var_name = name_by_uid.get(uid)
             # Guard lookup: do not let global dataset errors (key: None) apply to cards
-            n = counts.get(var_name, 0) if var_name else 0
+            n = error_counts.get(var_name, 0) if var_name else 0
     
             if n:
-                children.append(f"{n} error" if n == 1 else f"{n} errors")
-                styles.append(_var_err_pill_style())
+                error_children.append(f"{n} error" if n == 1 else f"{n} errors")
+                error_styles.append(_var_err_pill_style())
             else:
-                children.append([])
-                styles.append({'display': 'none'})
+                error_children.append([])
+                error_styles.append({'display': 'none'})
+
+        warning_children, warning_styles = [], []
+        for uid in warning_pill_uids:
+            var_name = name_by_uid.get(uid)
+            n = warning_counts.get(var_name, 0) if var_name else 0
+            if n:
+                warning_children.append(f"{n} warning" if n == 1 else f"{n} warnings")
+                warning_styles.append(_var_warn_pill_style())
+            else:
+                warning_children.append([])
+                warning_styles.append({'display': 'none'})
 
         classes = []
         for uid in card_uids:
             var_name = name_by_uid.get(uid)
-            # Guard class assignment as well
-            has_error = bool(var_name and counts.get(var_name, 0))
-            classes.append('nc-var-card has-errors' if has_error else 'nc-var-card')
+            has_error = bool(var_name and error_counts.get(var_name, 0))
+            has_warning = bool(var_name and warning_counts.get(var_name, 0))
+            if has_error:
+                classes.append('nc-var-card has-errors')
+            elif has_warning:
+                classes.append('nc-var-card has-warnings')
+            else:
+                classes.append('nc-var-card')
         
-        return children, styles, classes
+        return error_children, error_styles, warning_children, warning_styles, classes
 
     @app.callback(
         Output({'type': 'nc-var-field-err', 'index': ALL, 'field': ALL}, 'children'),
         Output({'type': 'nc-var-field-wrap', 'index': ALL, 'field': ALL}, 'className'),
+        Output({'type': 'nc-var-record-err', 'index': ALL}, 'children'),
+        Output({'type': 'nc-var-extra-attr-err', 'index': ALL, 'attr_uid': ALL}, 'children'),
+        Output({'type': 'nc-var-extra-attr-value', 'index': ALL, 'attr_uid': ALL}, 'className'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
         Input({'type': 'nc-var-card-body', 'index': ALL}, 'style'), #  Body style flip on expand/collapse. Without this input, a card opened after the last validation run would mount empty error slots and never fill them
         State('nc-vars-store', 'data'),
+        State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'id'),
+        State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'value'),
         prevent_initial_call=True
     )
-    def update_var_field_errors(problems, mode, submission_id, body_styles, vars_store):
+    def update_var_field_errors(
+        problems, mode, submission_id, body_styles, vars_store, extra_attr_key_ids, extra_attr_key_values
+    ):
         problems = _visible_problems(problems, mode, submission_id)
         by_name = variable_problems_by_name(problems)
         name_by_uid = {v['uid']: v.get('name') for v in (vars_store or [])}
 
         err_ids = [m['id'] for m in ctx.outputs_list[0]]
         wrap_ids = [m['id']for m in ctx.outputs_list[1]]
+        record_ids = [m['id'] for m in ctx.outputs_list[2]]
+        extra_attr_err_ids = [m['id'] for m in ctx.outputs_list[3]]
+        extra_attr_value_ids = [m['id'] for m in ctx.outputs_list[4]]
+        extra_attr_keys = {
+            (id_['index'], id_['attr_uid']): (value or '').strip()
+            for id_, value in zip(extra_attr_key_ids or [], extra_attr_key_values or [])
+        }
 
         def _lookup(id_):
             return by_name.get(name_by_uid.get(id_['index']), {}).get(id_['field'])
@@ -551,7 +594,44 @@ def register_callbacks(app):
             p = _lookup(id_)
             classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
 
-        return children, classes
+        visible_fields = {
+            'standard_name', 'units', 'fill_value', 'coordinates', 'axis',
+            'flag_values', 'flag_meanings',
+        }
+        record_errors = []
+        for id_ in record_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field_problems = by_name.get(var_name, {})
+            extra_fields = {
+                field for (uid, _), field in extra_attr_keys.items()
+                if uid == id_['index']
+            }
+            record_errors.append([
+                _err_text(problem['message'], problem['severity'])
+                for field, problem in field_problems.items()
+                if field not in visible_fields and field not in extra_fields
+            ])
+
+        extra_attr_errors = []
+        for id_ in extra_attr_err_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
+            problem = by_name.get(var_name, {}).get(field)
+            extra_attr_errors.append(
+                _err_text(problem['message'], problem['severity']) if problem else []
+            )
+
+        extra_attr_value_classes = []
+        for id_ in extra_attr_value_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
+            problem = by_name.get(var_name, {}).get(field)
+            extra_attr_value_classes.append(
+                f"nc-var-extra-attr-value is-{problem['severity']}"
+                if problem else 'nc-var-extra-attr-value'
+            )
+
+        return children, classes, record_errors, extra_attr_errors, extra_attr_value_classes
 
 
 

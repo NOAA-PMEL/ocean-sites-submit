@@ -119,6 +119,14 @@ def _var_err_pill_style():
         'boxShadow': '0 1px 3px rgba(0,0,0,0.3)'    # Gives elevation over header bar background
     }
 
+def _var_warn_pill_style():
+    return {
+        **_var_err_pill_style(),
+        'color': '#f7b44f',
+        'backgroundColor': 'rgba(247, 180, 79, .1)',
+        'border': '1px solid rgba(247, 180, 79, .45)',
+    }
+
 # ----------------------------------------------------------
 # Imported Variable Card
 # ----------------------------------------------------------
@@ -130,12 +138,18 @@ def _var_type_badge(var_type: str):
         'coordinate': {
             'color': '#38d9a9', 'background': 'rgba(56,217,169,.08)', 'border': '1px solid rgba(56,217,169,.12)'},
         'qc': {
-            'color': '#f7b44f', 'background': 'rgba(247,180,79,.08)', 'border': '1px solid rgba(247,180,79,.12)'}
+            'color': '#f7b44f', 'background': 'rgba(247,180,79,.08)', 'border': '1px solid rgba(247,180,79,.12)'},
+        'dm': {
+            'color': '#63a6ff', 'background': 'rgba(99,166,255,.08)', 'border': '1px solid rgba(99,166,255,.12)'},
+        'uncertainty': {
+            'color': '#d58aff', 'background': 'rgba(213,138,255,.08)', 'border': '1px solid rgba(213,138,255,.12)'}
     }
     labels = {
         'data': 'Data',
         'coordinate': 'Coord',
-        'qc': 'QC'
+        'qc': 'QC',
+        'dm': 'DM',
+        'uncertainty': 'Uncertainty'
     }
     s = styles.get(var_type, {})
     return html.Span(
@@ -173,6 +187,7 @@ def _var_card_body_children(uid: str, var_type: str, attributes: dict, extra_sto
                    'gap': '12px', 'marginBottom': '16px'},
             children=attr_inputs
         ),
+        html.Div(id={'type': 'nc-var-record-err', 'index': uid}, children=[]),
         _section_label('Extra attributes'),
         html.Div(id={'type': 'nc-var-extra-container', 'index': uid}, children=extra_attr_children),
         html.Button(
@@ -257,6 +272,11 @@ def _imported_var_card(uid: str, name: str, var_type: str, dtype: str,
                                 style={'display': 'none'},
                                 children=[],
                             ),
+                            html.Span(
+                                id={'type': 'nc-var-warn-count', 'index': uid},
+                                style={'display': 'none'},
+                                children=[],
+                            ),
                         ]
                     ),
                 ]
@@ -282,7 +302,7 @@ def _attr_inputs_for_type(uid: str, var_type: str, attributes: dict):
     Read-only structural fields (dtype, shape, dimensions) render as plain text.
     """
     def _field(label, component, span=1, field_key=None):
-        style = {'gridColumns': f'span {span}'} if span > 1 else {}
+        style = {'gridColumn': f'span {span}'} if span > 1 else {}
 
         if not field_key:
             return html.Div(style=style, children=[html.Label(label, style=_label_style), component])
@@ -331,10 +351,18 @@ def _attr_inputs_for_type(uid: str, var_type: str, attributes: dict):
         ]
     elif var_type == 'qc':
         return [
-            _field('Units', _inp({'type': 'nc-var-units', 'index': uid}, 'e.g. 1', 'units'), field_key='units'),
-            _field('Fill value', _inp({'type': 'nc-var-fill-value', 'index': uid}, 'e.g. -128b', 'fill_value', monospace=True), field_key='fill_value'),
             _field('Flag values', _inp({'type': 'nc-var-flag-values', 'index': uid}, 'e.g. 0b, 1b, 2b, 3b, 4b, 7b, 8b, 9b', 'flag_values', monospace=True), span=3, field_key='flag_values'),
             _field('Flag meanings', _inp({'type': 'nc-var-flag-meanings', 'index': uid}, 'e.g. unknown good_data probably_good_data potentially_correctable_bad_data bad_data nominal_value interpolated_value missing_value', 'flag_meanings', monospace=True), span=3, field_key='flag_meanings'),
+        ]
+    elif var_type == 'dm':
+        return [
+            _field('Flag values', _inp({'type': 'nc-var-flag-values', 'index': uid}, 'R, P, D', 'flag_values', monospace=True), span=3, field_key='flag_values'),
+            _field('Flag meanings', _inp({'type': 'nc-var-flag-meanings', 'index': uid}, 'real-time provisional delayed-mode', 'flag_meanings', monospace=True), span=3, field_key='flag_meanings'),
+        ]
+    elif var_type == 'uncertainty':
+        return [
+            _field('Units', _inp({'type': 'nc-var-units', 'index': uid}, 'Must match the paired data variable', 'units'), field_key='units'),
+            _field('Fill value', _inp({'type': 'nc-var-fill-value', 'index': uid}, 'NetCDF Float fill value', 'fill_value', monospace=True), field_key='fill_value'),
         ]
 
     # Fallback - render all attributes as generic inputs
@@ -827,6 +855,8 @@ def create_tab_content():
                                 ('Data', 'data'),
                                 ('Coord', 'coordinate'),
                                 ('QC', 'qc'),
+                                ('DM', 'dm'),
+                                ('Uncertainty', 'uncertainty'),
                             ]
                         ]
                     ),

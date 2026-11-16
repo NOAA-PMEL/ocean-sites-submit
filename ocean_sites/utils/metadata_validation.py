@@ -33,7 +33,9 @@ from ocean_sites.models import (
     NetcdfGlobalAttributesSchema,
     NetcdfDataVariableSchema,
     NetcdfCoordinateVariableSchema,
-    NetcdfQCVariableSchema
+    NetcdfQCVariableSchema,
+    NetcdfDMVariableSchema,
+    NetcdfUncertaintyVariableSchema
 )
 from ocean_sites.utils.metadata_diff import (
     _coerce_enum,
@@ -52,7 +54,74 @@ VARIABLE = "variable"
 _SCHEMA_BY_VAR_TYPE = {
     "data": NetcdfDataVariableSchema,
     "coordinate": NetcdfCoordinateVariableSchema,
-    "qc": NetcdfQCVariableSchema
+    "qc": NetcdfQCVariableSchema,
+    "dm": NetcdfDMVariableSchema,
+    "uncertainty": NetcdfUncertaintyVariableSchema
+}
+
+_QC_FLAG_VALUES = ("0", "1", "2", "3", "4", "7", "8", "9")
+_QC_FLAG_MEANINGS = (
+    "unknown",
+    "good_data",
+    "probably_good_data",
+    "potentially_correctable_bad_data",
+    "bad_data",
+    "nominal_value",
+    "interpolated_value",
+    "missing_value",
+)
+
+_QC_INDICATOR_VALUES = (
+    "unknown",
+    "good data",
+    "probably good data",
+    "potentially correctable bad data",
+    "bad data",
+    "nominal value",
+    "interpolated value",
+    "missing value",
+)
+
+_PROCESSING_LEVEL_VALUES = (
+    "Raw instrument data",
+    "Instrument data that has been converted to geophysical values",
+    "Post-recovery calibrations have been applied",
+    "Data has been scaled using contextual information",
+    "Known bad data has been replaced with null values",
+    "Known bad data has been replaced with values based on surrounding data",
+    "Ranges applied, bad data flagged",
+    "Data interpolated",
+    "Data manually reviewed",
+    "Data verified against model or other contextual information",
+    "Other QC process applied",
+)
+
+_DM_FLAG_VALUES = ("R", "P", "D", "M")
+_DM_FLAG_MEANINGS = ("real-time", "provisional", "delayed-mode", "mixed")
+
+_HORIZONTAL_COORDINATE_REFERENCE_FRAME = "urn:ogc:def:crs:EPSG::4326"
+_VERTICAL_COORDINATE_REFERENCE_FRAMES = {
+    "down": "urn:ogc:def:crs:EPSG::5831",
+    "up": "urn:ogc:def:crs:EPSG::5829",
+}
+_VERTICAL_REFERENCES = (
+    "sea_level",
+    "mean_sea_level",
+    "mean_lower_low_water",
+    "wgs84_geoid",
+)
+
+_COORDINATE_VALID_RANGES = {
+    "T": {"valid_min": 0.0, "valid_max": 90000.0},
+    "Y": {"valid_min": -90.0, "valid_max": 90.0},
+    "X": {"valid_min": -180.0, "valid_max": 180.0},
+    "Z": {"valid_min": 0.0, "valid_max": 12000.0},
+}
+
+_SPATIAL_AXIS_MIN_FIELDS = {
+    "X": "geospatial_lon_min",
+    "Y": "geospatial_lat_min",
+    "Z": "geospatial_vertical_min",
 }
 
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
@@ -79,20 +148,64 @@ _BOUND_PAIRS = (
 )
 
 # --------------------------------------------------------------
-# For lat/lon min/max problems (won't catch without this because of how pydantic works)
+# For spatial min/max problems that must be checked even when another field fails.
 # TODO: figure out times (right now are strs in DB, if want to include start/end time, need
 # to make this a datetime and fix downstream)
 # --------------------------------------------------------------
-def _cross_field_problems(g: dict) -> list:
+def _singleton_spatial_bounds(current: dict) -> set:
+    dimension_sizes = {
+        dimension.get("name"): dimension.get("size")
+        for dimension in current.get("dimensions") or []
+        if isinstance(dimension, dict) and dimension.get("name") is not None
+    }
+    dimensions_by_axis = {axis: set() for axis in _SPATIAL_AXIS_MIN_FIELDS}
+    for variable in current.get("variables") or []:
+        if not isinstance(variable, dict):
+            continue
+        axis = variable.get("axis")
+        if not isinstance(axis, str):
+            continue
+        axis = axis.strip().upper()
+        if axis not in dimensions_by_axis:
+            continue
+
+        dimensions = variable.get("dimensions")
+        if isinstance(dimensions, str):
+            dimensions = dimensions.split()
+        if isinstance(dimensions, (list, tuple)):
+            dimensions_by_axis[axis].update(
+                name for name in dimensions if isinstance(name, str)
+            )
+
+    return {
+        _SPATIAL_AXIS_MIN_FIELDS[axis]
+        for axis, dimension_names in dimensions_by_axis.items()
+        if dimension_names and all(
+            isinstance(dimension_sizes.get(name), int)
+            and not isinstance(dimension_sizes.get(name), bool)
+            and 0 <= dimension_sizes[name] <= 1
+            for name in dimension_names
+        )
+    }
+
+def _cross_field_problems(
+    g: dict, allow_equal_bounds: Optional[set] = None
+) -> list:
     """
     Here rather than in the pydantic shcema because a mode_validator(mode='after')
     only runs once every field has validated -- one bad data_mode and the bounds would 
     never get checked
     """
     out = []
+    allow_equal_bounds = allow_equal_bounds or set()
     for lo, hi in _BOUND_PAIRS:
         a, b = g.get(lo), g.get(hi)
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)) and a >= b:
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            invalid_bounds = a >= b
+            if lo in allow_equal_bounds and a == b:
+                invalid_bounds = False
+            if not invalid_bounds:
+                continue
             out.append(Problem(
                 scope=GLOBAL, field=hi,
                 message=f"Must be greater than the minimum ({a}).",
@@ -142,6 +255,9 @@ def _clean(d: dict) -> dict:
 def _clean_variable(var: dict) -> dict:
     """Blank-strip, then stringify the columsn the DB stores as text."""
     cleaned = _clean(var)
+    dimensions = cleaned.get("dimensions")
+    if isinstance(dimensions, (list, tuple)):
+        cleaned["dimensions"] = " ".join(str(dimension) for dimension in dimensions)
     for name in VARIABLE_STRING_FIELDS:
         value = cleaned.get(name)
         if value is not None and not isinstance(value, str):
@@ -280,25 +396,39 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     current = current or {}
     globals_clean = _clean(current.get("global_attributes") or {})
     original_globals = (original or {}).get("global_attributes") or {}
+    allow_equal_bounds = _singleton_spatial_bounds(current)
 
     # Enum-loss first, so its message besats the generic "is reqwuired"
     for p in _enum_loss_problems(globals_clean, original_globals):
         add(p)
 
     # Cross-field next-- these run whether or not the field checks pass
-    for p in _cross_field_problems(globals_clean):
+    for p in _cross_field_problems(globals_clean, allow_equal_bounds):
         add(p)
 
     try:
-        NetcdfGlobalAttributesSchema.model_validate(globals_clean)
+        NetcdfGlobalAttributesSchema.model_validate(
+            globals_clean,
+            context={"allow_equal_bounds": allow_equal_bounds},
+        )
     except ValidationError as exc:
         for err in exc.errors():
             for p in _problems_from_error(err, GLOBAL, _GLOBAL_LABELS, _GLOBAL_FIELDS):
                 add(p)
 
-    for var in current.get("variables") or []:
+    for p in _processing_level_problems(
+        globals_clean.get("extra_global_attrs"), GLOBAL
+    ):
+        add(p)
+
+    variables = current.get("variables") or []
+    for var in variables:
         for p in _validate_variable(var):
             add(p)
+    for p in _ancillary_variable_problems(variables):
+        add(p)
+    for p in _ancillary_reference_problems(variables):
+        add(p)
 
     return [asdict(p) for p in problems]
 
@@ -320,17 +450,404 @@ def _validate_variable(var: dict) -> list:
             valid_options=list(_SCHEMA_BY_VAR_TYPE)
         )]
 
+    cleaned_var = _clean_variable(var)
+    problems = []
     try:
-        schema.model_validate(_clean_variable(var))
+        schema.model_validate(cleaned_var)
     except ValidationError as exc:
-        return [
+        problems.extend(
             p
             for err in exc.errors()
             for p in _problems_from_error(
                 err, VARIABLE, _VARIABLE_LABELS, _VARIABLE_FIELDS, var_name=name
             )
-        ]
-    return []
+        )
+
+    if var_type == "coordinate":
+        problems.extend(_coordinate_axis_problems(name, cleaned_var))
+        problems.extend(_qc_indicator_problems(name, cleaned_var))
+        
+    if var_type in ("qc", "dm"):
+        flag_values = tuple(
+            token
+            for value in (cleaned_var.get("flag_values") or "").split(",")
+            for token in value.split()
+        )
+        flag_meanings = tuple((cleaned_var.get("flag_meanings") or "").split())
+        expected_values, expected_meanings = (
+            (_QC_FLAG_VALUES, _QC_FLAG_MEANINGS)
+            if var_type == "qc"
+            else (_DM_FLAG_VALUES, _DM_FLAG_MEANINGS)
+        )
+        if (
+            flag_values
+            and flag_meanings
+            and (flag_values != expected_values or flag_meanings != expected_meanings)
+        ):
+            label = "QC" if var_type == "qc" else "DM"
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="flag_values",
+                message=(
+                    f"{label} flag values and meanings must match the required mapping: "
+                    f"{', '.join(expected_values)} maps in order to "
+                    f"{' '.join(expected_meanings)}."
+                ),
+                also_fields=("flag_meanings",),
+            ))
+
+    if var_type == "dm":
+        dtype = str(cleaned_var.get("dtype") or "").lower()
+        if dtype not in {"|s1", "s1", "char"}:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dtype",
+                message="DM variables must use the NetCDF Char datatype.",
+            ))
+        extra_attrs = cleaned_var.get("extra_attrs")
+        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
+        if long_name != "data mode":
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="extra_attrs",
+                message='DM variables must have long_name set to "data mode".',
+            ))
+
+    if var_type == "uncertainty":
+        dtype = str(cleaned_var.get("dtype") or "").lower()
+        if dtype not in {"float32", "f4"}:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dtype",
+                message="Uncertainty variables must use the NetCDF Float datatype.",
+            ))
+        extra_attrs = cleaned_var.get("extra_attrs")
+        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
+        if not isinstance(long_name, str) or not long_name.strip():
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="extra_attrs",
+                message="Uncertainty variables require a long_name attribute.",
+            ))
+
+    return problems
+
+def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
+    axis = str(var.get("axis") or "").strip().upper()
+    if axis not in _COORDINATE_VALID_RANGES:
+        return []
+
+    extra_attrs = var.get("extra_attrs")
+    attrs = extra_attrs if isinstance(extra_attrs, dict) else {}
+
+    def attr_value(field):
+        value = attrs.get(field)
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        return value.strip() if isinstance(value, str) else None
+
+    def attr_is_present(field):
+        value = attrs.get(field)
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+    def attr_number(field):
+        value = attrs.get(field)
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
+
+    problems = []
+
+    for field, expected in _COORDINATE_VALID_RANGES[axis].items():
+        if not attr_is_present(field):
+            continue
+        actual = attr_number(field)
+        if actual is None or actual != expected:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=field,
+                severity=WARNING,
+                message=(
+                    f"{axis} coordinate variables should use "
+                    f"{field}={expected}."
+                ),
+                valid_options=[expected],
+            ))
+
+    if axis == "T":
+        return problems
+
+    if axis in {"X", "Y"}:
+        expected_attrs = {
+            "coordinate_reference_frame": _HORIZONTAL_COORDINATE_REFERENCE_FRAME,
+            "reference": "WGS84",
+        }
+        for field, expected in expected_attrs.items():
+            if attr_is_present(field) and attr_value(field) != expected:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=field,
+                    severity=WARNING,
+                    message=(
+                        f"{axis} coordinate variables should use {field}={expected!r}."
+                    ),
+                    valid_options=[expected],
+                ))
+        return problems
+
+    positive_present = attr_is_present("positive")
+    positive = attr_value("positive")
+    if positive_present and positive not in _VERTICAL_COORDINATE_REFERENCE_FRAMES:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="positive",
+            severity=WARNING,
+            message="Z coordinate variables should use positive='up' or 'down'.",
+            valid_options=["up", "down"],
+        ))
+
+    frame_present = attr_is_present("coordinate_reference_frame")
+    frame = attr_value("coordinate_reference_frame")
+    if frame_present:
+        expected_frame = _VERTICAL_COORDINATE_REFERENCE_FRAMES.get(positive)
+        valid_frames = list(_VERTICAL_COORDINATE_REFERENCE_FRAMES.values())
+        if frame not in valid_frames or (
+            expected_frame is not None and frame != expected_frame
+        ):
+            message = (
+                f"Z coordinates with positive={positive!r} should use "
+                f"coordinate_reference_frame={expected_frame!r}."
+                if expected_frame is not None
+                else (
+                    "Z coordinate variables should use a valid "
+                    "coordinate_reference_frame."
+                )
+            )
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="coordinate_reference_frame",
+                severity=WARNING,
+                message=message,
+                valid_options=[expected_frame] if expected_frame else valid_frames,
+            ))
+
+    reference = attr_value("reference")
+    if attr_is_present("reference") and reference not in _VERTICAL_REFERENCES:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="reference",
+            severity=WARNING,
+            message=(
+                "Z coordinate variables should use reference from: "
+                f"{', '.join(_VERTICAL_REFERENCES)}."
+            ),
+            valid_options=list(_VERTICAL_REFERENCES),
+        ))
+
+    return problems
+
+def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
+    extra_attrs = var.get("extra_attrs")
+    if not isinstance(extra_attrs, dict) or "QC_indicator" not in extra_attrs:
+        return []
+
+    value = extra_attrs["QC_indicator"]
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+
+    if isinstance(value, str) and value in _QC_INDICATOR_VALUES:
+        return []
+
+    return [Problem(
+        scope=VARIABLE,
+        var_name=name,
+        field="QC_indicator",
+        message=(
+            "QC_indicator must be one of: "
+            f"{', '.join(_QC_INDICATOR_VALUES)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=list(_QC_INDICATOR_VALUES),
+    )]
+
+def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
+    by_name = {str(var.get("name") or "").casefold(): var for var in variables}
+    problems = []
+
+    def dimension_names(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value)
+        return tuple(str(value or "").split())
+
+    for var in variables:
+        var_type = var.get("var_type")
+        if var_type not in ("dm", "uncertainty"):
+            continue
+
+        name = str(var.get("name") or "")
+        suffix = "_DM" if var_type == "dm" else "_UNCERTAINTY"
+        parameter_name = name[:-len(suffix)] if name.upper().endswith(suffix) else ""
+        parameter = by_name.get(parameter_name.casefold())
+        if parameter is None or parameter.get("var_type") != "data":
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message=f"A {var_type.upper()} variable must have a matching data variable.",
+            ))
+            continue
+
+        if dimension_names(var.get("dimensions")) != dimension_names(parameter.get("dimensions")):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message="Ancillary variable dimensions must match the paired data variable.",
+            ))
+        if (
+            var_type == "uncertainty"
+            and _blank_to_none(var.get("units")) != _blank_to_none(parameter.get("units"))
+        ):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="units",
+                message="Uncertainty units must match the paired data variable.",
+            ))
+    return problems
+
+def _processing_level_problems(
+    extra_attrs: Any, scope: str, var_name: Optional[str] = None
+) -> list[Problem]:
+    if not isinstance(extra_attrs, dict) or "processing_level" not in extra_attrs:
+        return []
+
+    value = extra_attrs["processing_level"]
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+        if value in _PROCESSING_LEVEL_VALUES:
+            return []
+
+    return [Problem(
+        scope=scope,
+        var_name=var_name,
+        field="processing_level",
+        message=(
+            "processing_level must be one of: "
+            f"{'; '.join(_PROCESSING_LEVEL_VALUES)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=list(_PROCESSING_LEVEL_VALUES),
+    )]
+
+def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
+    by_name = {str(var.get("name") or "").casefold(): var for var in variables}
+    problems = []
+
+    def dimension_names(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value)
+        return tuple(str(value or "").split())
+
+    for var in variables:
+        var_type = var.get("var_type")
+        if var_type not in ("dm", "uncertainty"):
+            continue
+
+        name = str(var.get("name") or "")
+        suffix = "_DM" if var_type == "dm" else "_UNCERTAINTY"
+        parameter_name = name[:-len(suffix)] if name.upper().endswith(suffix) else ""
+        parameter = by_name.get(parameter_name.casefold())
+        if parameter is None or parameter.get("var_type") != "data":
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message=f"A {var_type.upper()} variable must have a matching data variable.",
+            ))
+            continue
+
+        if dimension_names(var.get("dimensions")) != dimension_names(parameter.get("dimensions")):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message="Ancillary variable dimensions must match the paired data variable.",
+            ))
+        if (
+            var_type == "uncertainty"
+            and _blank_to_none(var.get("units")) != _blank_to_none(parameter.get("units"))
+        ):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="units",
+                message="Uncertainty units must match the paired data variable.",
+            ))
+    return problems
+
+def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
+    variable_names = {
+        var.get("name")
+        for var in variables
+        if isinstance(var.get("name"), str)
+    }
+    problems = []
+
+    for var in variables:
+        extra_attrs = var.get("extra_attrs")
+        if not isinstance(extra_attrs, dict):
+            continue
+
+        for field in ("ancillary_variable", "ancillary_variables"):
+            value = extra_attrs.get(field)
+            if value is None:
+                continue
+            if hasattr(value, "tolist"):
+                value = value.tolist()
+            values = value if isinstance(value, (list, tuple)) else [value]
+            references = []
+            for item in values:
+                if isinstance(item, bytes):
+                    item = item.decode()
+                references.extend(str(item).replace(",", " ").split())
+
+            missing = list(dict.fromkeys(
+                name for name in references if name not in variable_names
+            ))
+            if missing:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=var.get("name") or "(unamed)",
+                    field=field,
+                    message=(
+                        f"Referenced variable(s) not found: {', '.join(missing)}."
+                    ),
+                ))
+
+    return problems
 
 # --------------------------------------------------------------
 # Read helpers for the UI layer
@@ -363,13 +880,22 @@ def global_problems_by_field(problems: list) -> dict:
 def variable_problems_by_name(problems: list) -> dict:
     """{var_name: {field_name: problem}} -- keyed to match nc-vars-store names"""
     out: dict = {}
+
+    def add_problem(fields: dict, field: str, problem: dict) -> None:
+        existing = fields.get(field)
+        if (
+            existing is None
+            or (existing["severity"] == WARNING and problem["severity"] == ERROR)
+        ):
+            fields[field] = problem
+
     for p in problems or []:
         if p["scope"] != VARIABLE:
             continue
         fields = out.setdefault(p["var_name"], {})
-        fields.setdefault(p["field"], p)
+        add_problem(fields, p["field"], p)
         for other in p.get("also_fields") or ():
-            fields.setdefault(other, p)
+            add_problem(fields, other, p)
     return out
 
 def error_count_by_variable(problems: list) -> dict:
@@ -377,6 +903,15 @@ def error_count_by_variable(problems: list) -> dict:
     counts: dict = {}
     for p in problems or []:
         if p["scope"] == VARIABLE and p["severity"] == ERROR:
+            counts[p["var_name"]] = counts.get(p["var_name"], 0) + 1
+
+    return counts
+
+def warning_count_by_variable(problems: list) -> dict:
+    """{var_name: n} -- drives the warning count pill on a variable card."""
+    counts: dict = {}
+    for p in problems or []:
+        if p["scope"] == VARIABLE and p["severity"] == WARNING:
             counts[p["var_name"]] = counts.get(p["var_name"], 0) + 1
 
     return counts
