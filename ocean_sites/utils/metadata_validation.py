@@ -71,6 +71,31 @@ _QC_FLAG_MEANINGS = (
     "missing_value",
 )
 
+_QC_INDICATOR_VALUES = (
+    "unknown",
+    "good data",
+    "probably good data",
+    "potentially correctable bad data",
+    "bad data",
+    "nominal value",
+    "interpolated value",
+    "missing value",
+)
+
+_PROCESSING_LEVEL_VALUES = (
+    "Raw instrument data",
+    "Instrument data that has been converted to geophysical values",
+    "Post-recovery calibrations have been applied",
+    "Data has been scaled using contextual information",
+    "Known bad data has been replaced with null values",
+    "Known bad data has been replaced with values based on surrounding data",
+    "Ranges applied, bad data flagged",
+    "Data interpolated",
+    "Data manually reviewed",
+    "Data verified against model or other contextual information",
+    "Other QC process applied",
+)
+
 _DM_FLAG_VALUES = ("R", "P", "D", "M")
 _DM_FLAG_MEANINGS = ("real-time", "provisional", "delayed-mode", "mixed")
 
@@ -337,6 +362,11 @@ def validate_metadata(current: dict, original: dict = None) -> list:
             for p in _problems_from_error(err, GLOBAL, _GLOBAL_LABELS, _GLOBAL_FIELDS):
                 add(p)
 
+    for p in _processing_level_problems(
+        globals_clean.get("extra_global_attrs"), GLOBAL
+    ):
+        add(p)
+
     variables = current.get("variables") or []
     for var in variables:
         for p in _validate_variable(var):
@@ -381,6 +411,7 @@ def _validate_variable(var: dict) -> list:
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
+        problems.extend(_qc_indicator_problems(name, cleaned_var))
         
     if var_type in ("qc", "dm"):
         flag_values = tuple(
@@ -579,6 +610,103 @@ def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
 
     return problems
 
+def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
+    extra_attrs = var.get("extra_attrs")
+    if not isinstance(extra_attrs, dict) or "QC_indicator" not in extra_attrs:
+        return []
+
+    value = extra_attrs["QC_indicator"]
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+
+    if isinstance(value, str) and value in _QC_INDICATOR_VALUES:
+        return []
+
+    return [Problem(
+        scope=VARIABLE,
+        var_name=name,
+        field="QC_indicator",
+        message=(
+            "QC_indicator must be one of: "
+            f"{', '.join(_QC_INDICATOR_VALUES)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=list(_QC_INDICATOR_VALUES),
+    )]
+
+def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
+    by_name = {str(var.get("name") or "").casefold(): var for var in variables}
+    problems = []
+
+    def dimension_names(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value)
+        return tuple(str(value or "").split())
+
+    for var in variables:
+        var_type = var.get("var_type")
+        if var_type not in ("dm", "uncertainty"):
+            continue
+
+        name = str(var.get("name") or "")
+        suffix = "_DM" if var_type == "dm" else "_UNCERTAINTY"
+        parameter_name = name[:-len(suffix)] if name.upper().endswith(suffix) else ""
+        parameter = by_name.get(parameter_name.casefold())
+        if parameter is None or parameter.get("var_type") != "data":
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message=f"A {var_type.upper()} variable must have a matching data variable.",
+            ))
+            continue
+
+        if dimension_names(var.get("dimensions")) != dimension_names(parameter.get("dimensions")):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                message="Ancillary variable dimensions must match the paired data variable.",
+            ))
+        if (
+            var_type == "uncertainty"
+            and _blank_to_none(var.get("units")) != _blank_to_none(parameter.get("units"))
+        ):
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="units",
+                message="Uncertainty units must match the paired data variable.",
+            ))
+    return problems
+
+def _processing_level_problems(
+    extra_attrs: Any, scope: str, var_name: Optional[str] = None
+) -> list[Problem]:
+    if not isinstance(extra_attrs, dict) or "processing_level" not in extra_attrs:
+        return []
+
+    value = extra_attrs["processing_level"]
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+        if value in _PROCESSING_LEVEL_VALUES:
+            return []
+
+    return [Problem(
+        scope=scope,
+        var_name=var_name,
+        field="processing_level",
+        message=(
+            "processing_level must be one of: "
+            f"{'; '.join(_PROCESSING_LEVEL_VALUES)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=list(_PROCESSING_LEVEL_VALUES),
+    )]
 
 def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
     by_name = {str(var.get("name") or "").casefold(): var for var in variables}

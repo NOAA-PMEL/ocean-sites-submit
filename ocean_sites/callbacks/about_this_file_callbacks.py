@@ -357,12 +357,18 @@ def register_callbacks(app):
     @app.callback(
         Output({'type': 'nc-field-err', 'field': ALL}, 'children'),
         Output({'type': 'nc-field-wrap', 'field': ALL}, 'className'),
+        Output({'type': 'nc-extra-attr-err', 'index': ALL}, 'children'),
+        Output({'type': 'nc-extra-attr-value', 'index': ALL}, 'className'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
+        State({'type': 'nc-extra-attr-key', 'index': ALL}, 'id'),
+        State({'type': 'nc-extra-attr-key', 'index': ALL}, 'value'),
         prevent_initial_call=True
     )
-    def update_global_field_errors(problems, mode, submission_id):
+    def update_global_field_errors(
+        problems, mode, submission_id, extra_attr_key_ids, extra_attr_key_values
+    ):
         loud = bool(submission_id) and (mode or {}).get('loud_for') == submission_id
         if not loud:
             # Before this submission's first save, only complain about values they actually typed
@@ -372,6 +378,12 @@ def register_callbacks(app):
 
         err_fields = [m['id']['field'] for m in ctx.outputs_list[0]]
         wrap_fields = [m['id']['field'] for m in ctx.outputs_list[1]]
+        extra_attr_err_ids = [m['id'] for m in ctx.outputs_list[2]]
+        extra_attr_value_ids = [m['id'] for m in ctx.outputs_list[3]]
+        extra_attr_keys = {
+            id_['index']: (value or '').strip()
+            for id_, value in zip(extra_attr_key_ids or [], extra_attr_key_values or [])
+        }
 
         children = []
         for f in err_fields:
@@ -384,5 +396,23 @@ def register_callbacks(app):
         for f in wrap_fields:
             p = by_field.get(f)
             classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
+
+        extra_attr_errors = []
+        for id_ in extra_attr_err_ids:
+            field = extra_attr_keys.get(id_['index'])
+            p = by_field.get(field)
+            extra_attr_errors.append(
+                _err_text(p['message'], p['severity'])
+                if p and p['field'] == field else []
+            )
+
+        extra_attr_value_classes = []
+        for id_ in extra_attr_value_ids:
+            field = extra_attr_keys.get(id_['index'])
+            p = by_field.get(field)
+            extra_attr_value_classes.append(
+                f"nc-extra-attr-value is-{p['severity']}"
+                if p else 'nc-extra-attr-value'
+            )
      
-        return children, classes
+        return children, classes, extra_attr_errors, extra_attr_value_classes
