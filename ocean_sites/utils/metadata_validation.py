@@ -503,6 +503,10 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         globals_clean, GLOBAL
     ):
         add(p)
+    for p in _global_qc_indicator_problems(
+        globals_clean.get("extra_global_attrs")
+    ):
+        add(p)
 
     variables = current.get("variables") or []
     for var in variables:
@@ -752,6 +756,37 @@ def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
 
     return problems
 
+def _global_qc_indicator_problems(global_attrs: dict) -> list[Problem]:
+    if not isinstance(global_attrs, dict) or "QC_indicator" not in global_attrs:
+        return []
+
+    value = global_attrs["QC_indicator"]
+    
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+
+    valid_options = ["unknown", "excellent", "probably good", "mixed"]
+
+    if isinstance(value, str) and value.lower() in valid_options:
+        return []
+
+    # Assuming GLOBAL is a constant in your file like VARIABLE is. 
+    # If not, replace GLOBAL with the string "global" or however you define global scope.
+    return [Problem(
+        scope=GLOBAL, 
+        var_name=None, 
+        field="QC_indicator",
+        severity=WARNING,
+        message=(
+            "Global QC_indicator must be one of: "
+            f"{', '.join(valid_options)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=valid_options,
+    )]
+    
 def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
     extra_attrs = var.get("extra_attrs")
     if not isinstance(extra_attrs, dict) or "QC_indicator" not in extra_attrs:
