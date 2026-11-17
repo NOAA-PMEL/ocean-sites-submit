@@ -53,18 +53,20 @@ def _format_value_for_ui(value):
     
 def _sanitize_for_json(value):
     """
-    Recursively converts numpy scalar/array types (np.int32, np.float32,
-    np.bool_, np.ndarray,...) into plain JSON-serializable Python types
-    (int, float, bool, list). Leaves everything else untouched. Needed
+    Recursively converts numpy scalar/array types and byte strings into
+    plain JSON-serializable Python types (int, float, bool, str, list).
+    Needed
     because values pulled from xarray/netCDF attrs (via var.attrs) are
     frequently numpy scalars, whcih json.dumps can't handel -- and that's
     what SQLAlchemy uses under the hood to write JSONB columns. dcc.Store
     round-trips tolerate numpy fine (Dash's encoder handles it), so this
     santization only needs to happen here, at the DB boundary.
     """
-    # 1. Handle NumPy scalars
-    if isinstance(value, (np.floating, np.integer)):
-        value = value.item() # numpy
+    # 1. Handle NumPy scalars and byte strings
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
     if isinstance(value, float) and math.isnan(value):
         return None
     if isinstance(value, np.ndarray):
@@ -263,11 +265,15 @@ def load_ocean_sites_metadata(session, submission_id: str) -> Optional[dict]:
     ).scalar_one_or_none()
 
     dimension_rows = session.execute(
-        select(NetcdfDimension).where(NetcdfDimension.oads_metadata_id == oads_metadata_id)
+        select(NetcdfDimension)
+        .where(NetcdfDimension.oads_metadata_id == oads_metadata_id)
+        .order_by(NetcdfDimension.id)
     ).scalars().all()
 
     variable_rows = session.execute(
-        select(NetcdfVariable).where(NetcdfVariable.oads_metadata_id == oads_metadata_id)
+        select(NetcdfVariable)
+        .where(NetcdfVariable.oads_metadata_id == oads_metadata_id)
+        .order_by(NetcdfVariable.id)
     ).scalars().all()
 
     if global_attrs_row is None and not dimension_rows and not variable_rows:
