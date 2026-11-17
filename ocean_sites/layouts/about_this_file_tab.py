@@ -1,3 +1,4 @@
+from typing import Optional
 from dash import html, dcc
 from portal_core.utils import _section_label
 from portal_core.constants import (
@@ -142,7 +143,12 @@ def _field_block(label: str, nc_key: str, field_key: str, component):
         ]
     )
 
-def _err_text(message: str, severity: str):
+def _err_text(
+    message: str,
+    severity: str,
+    link_text: Optional[str] = None,
+    link_url: Optional[str] = None,
+):
     """
     Renders clean, minimal inline validation text below field elements.
     """
@@ -151,6 +157,20 @@ def _err_text(message: str, severity: str):
         
     is_error = severity == 'error'
     text_color = '#ff4d4d' if is_error else '#f7b44f'
+    message_children = [html.Span(message)]
+    if link_text and link_url and link_text in message:
+        before, _, after = message.partition(link_text)
+        message_children = []
+        if before:
+            message_children.append(html.Span(before))
+        message_children.append(html.A(
+            link_text,
+            href=link_url,
+            target='_blank',
+            rel='noopener noreferrer',
+        ))
+        if after:
+            message_children.append(html.Span(after))
 
     return html.Div(
         style={
@@ -164,7 +184,7 @@ def _err_text(message: str, severity: str):
         },
         children=[
             html.Span("✕" if is_error else "⚠️", style={'fontSize': '10px'}),
-            html.Span(message)
+            html.Span(message_children)
         ]
     )
 # -----------------------------------------------------------------------------
@@ -273,23 +293,38 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
             ],
         )
 
+    key_input = dcc.Input(
+        id=key_id,
+        className='nc-var-extra-attr-key' if var_uid is not None else 'nc-extra-attr-key',
+        type='text',
+        value=key,
+        placeholder='attribute name',
+        debounce=True,
+        disabled=removed,
+        style={
+            **_input_style,
+            'flex': '1',
+            'fontFamily': 'monospace',
+            'fontSize': '12px',
+            **strike
+        },
+    )
+    if var_uid is None:
+        key_input = html.Div(
+            style={'display': 'flex', 'flexDirection': 'column', 'flex': '1', 'minWidth': 0},
+            children=[
+                key_input,
+                html.Div(
+                    id={'type': 'nc-extra-attr-key-err', 'index': uid},
+                    className='nc-field-err',
+                    children=[],
+                ),
+            ],
+        )
+
     return [
         dot,
-        dcc.Input(
-            id=key_id,
-            type='text',
-            value=key,
-            placeholder='attribute name',
-            debounce=True,
-            disabled=removed,
-            style={
-                **_input_style,
-                'flex': '1', 
-                'fontFamily': 'monospace',
-                'fontSize': '12px',
-                **strike
-            },
-        ),
+        key_input,
         value_input,
         html.Span(
             className='nc-field-dot',

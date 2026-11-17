@@ -1,10 +1,13 @@
 """
 Validation for Ocean Sites netCDF metadata. 
 
-Pure functions. Takes the same dict shape produced by
+Takes the same dict shape produced by
 build_global_attributes_dict() + build_variables_list() -- which is also
 the shape the netCDF parser emits and the shape load_ocean_sites_metadata()
 reconstructs -- and returns a flat list of problem dicts.
+
+SeaVoX vocabularies are configured by attribute and collection code, fetched
+on demand, and cached per collection in process.
 
     problems = validate_metadata(edited_dict, original_dict)
 
@@ -18,14 +21,24 @@ Each problem is a plain dict (JSON-safe, so it round-trips through dcc.Store):
         'message':          'Data Mode is required',
         'invalid_value':    'Realtime' | None,
         'valid_options':    ['R', 'P', 'D', 'M'] | None,
+        'field_part':      'key' | 'value' | None,
+        'link_text':        str | None,
+        'link_url':         str | None,
         'also_fields':      ['geospatial_lat_min'] # highlight, but don't repeat the message (for when error is related to two related fields.)   
     }
 """
 from __future__ import annotations
 
+import json
+import logging
 import math
+import threading
+import time
 from dataclasses import dataclass, asdict
+from http.client import HTTPException
 from typing import Any, Optional
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 from pydantic import ValidationError
 from ocean_sites.models import (
     NetcdfGlobalAttributes,
@@ -58,6 +71,50 @@ _SCHEMA_BY_VAR_TYPE = {
     "dm": NetcdfDMVariableSchema,
     "uncertainty": NetcdfUncertaintyVariableSchema
 }
+
+_SEAVOX_CACHE_TTL_SECONDS = 24 * 60 * 60
+_SEAVOX_RETRY_SECONDS = 15 * 60
+_SEAVOX_REQUEST_TIMEOUT_SECONDS = 2
+_seavox_logger = logging.getLogger(__name__)
+_seavox_cache_lock = threading.Lock()
+
+# Entries map field, collection, display name, optional nested dict, and advice.
+_SEAVOX_ATTRIBUTE_VOCABULARIES = {
+    GLOBAL: (
+        (
+            "source",
+            "L06",
+            "SeaVoX Platform Categories",
+            "extra_global_attrs",
+            None,
+        ),
+        (
+            "area",
+            "C19",
+            "SeaVoX salt and fresh water body gazetteer",
+            "extra_global_attrs",
+            "Consider renaming the 'area' attribute to 'sea_area' to match "
+            "the OceanSITES v1.4 manual.",
+        ),
+        (
+            "sea_area",
+            "C19",
+            "SeaVoX salt and fresh water body gazetteer",
+            "extra_global_attrs",
+            None,
+        ),
+    ),
+    VARIABLE: (),
+}
+
+
+@dataclass
+class _SeavoxVocabularyCacheEntry:
+    preferred_labels: Optional[frozenset[str]] = None
+    expires_at: float = 0.0
+    retry_at: float = 0.0
+    
+_seavox_vocabulary_cache: dict[str, _SeavoxVocabularyCacheEntry] = {}
 
 _QC_FLAG_VALUES = ("0", "1", "2", "3", "4", "7", "8", "9")
 _QC_FLAG_MEANINGS = (
@@ -123,6 +180,25 @@ _SPATIAL_AXIS_MIN_FIELDS = {
     "Y": "geospatial_lat_min",
     "Z": "geospatial_vertical_min",
 }
+
+_SENSOR_MOUNT_VALUES = (
+    "mounted_on_fixed_structure",
+    "mounted_on_surface_buoy",
+    "mounted_on_mooring_line",
+    "mounted_on_bottom_lander",
+    "mounted_on_moored_profiler",
+    "mounted_on_glider",
+    "mounted_on_shipborne_fixed",
+    "mounted_on_shipborne_profiler",
+    "mounted_on_seafloor_structure",
+    "mounted_on_benthic_node",
+    "mounted_on_benthic_crawler",
+    "mounted_on_surface_buoy_tether",
+    "mounted_on_seafloor_structure_riser",
+    "mounted_on_fixed_subsurface_vertical_profiler",
+)
+
+_SENSOR_ORIENTATION_VALUES = ("downward", "upward", "horizontal")
 
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
@@ -227,11 +303,14 @@ class Problem:
     invalid_value: Any = None
     valid_options: Optional[list] = None
     also_fields: tuple = ()
+    link_text: Optional[str] = None
+    link_url: Optional[str] = None
+    field_part: Optional[str] = None
 
     @property
     def key(self):
-        """Idenitty for de-duplication: one problem per field per record."""
-        return (self.scope, self.var_name, self.field)
+        """Identity for de-duplication: one problem per input part per record."""
+        return (self.scope, self.var_name, self.field, self.field_part)
 
 # --------------------------------------------------------------
 # Normalisation
@@ -420,6 +499,10 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         globals_clean.get("extra_global_attrs"), GLOBAL
     ):
         add(p)
+    for p in _seavox_vocabulary_problems(
+        globals_clean, GLOBAL
+    ):
+        add(p)
 
     variables = current.get("variables") or []
     for var in variables:
@@ -462,10 +545,15 @@ def _validate_variable(var: dict) -> list:
                 err, VARIABLE, _VARIABLE_LABELS, _VARIABLE_FIELDS, var_name=name
             )
         )
+        
+    problems.extend(_seavox_vocabulary_problems(cleaned_var, VARIABLE, name))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
         problems.extend(_qc_indicator_problems(name, cleaned_var))
+        
+    if var_type != "coordinate":
+        problems.extend(_sensor_attribute_problems(name, cleaned_var))
         
     if var_type in ("qc", "dm"):
         flag_values = tuple(
@@ -690,6 +778,42 @@ def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
         valid_options=list(_QC_INDICATOR_VALUES),
     )]
 
+def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
+    extra_attrs = var.get("extra_attrs")
+    if not isinstance(extra_attrs, dict):
+        return []
+
+    problems = []
+    for field, valid_options in (
+        ("sensor_mount", _SENSOR_MOUNT_VALUES),
+        ("sensor_orientation", _SENSOR_ORIENTATION_VALUES),
+    ):
+        if field not in extra_attrs:
+            continue
+
+        value = extra_attrs[field]
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+            if value in valid_options:
+                continue
+        elif value is None:
+            continue
+
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field=field,
+            message=f"{field} must be one of: {', '.join(valid_options)}.",
+            invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+            valid_options=list(valid_options),
+        ))
+
+    return problems
+
 def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
     by_name = {str(var.get("name") or "").casefold(): var for var in variables}
     problems = []
@@ -808,6 +932,173 @@ def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
             ))
     return problems
 
+def _seavox_collection_url(collection_id: str) -> str:
+    return (
+        "https://vocab.nerc.ac.uk/collection/"
+        f"{quote(collection_id, safe='')}/current/"
+    )
+
+def _fetch_seavox_preferred_labels(collection_id: str) -> frozenset[str]:
+    url = (
+        f"{_seavox_collection_url(collection_id)}"
+        "?_profile=nvs&_mediatype=application/ld+json"
+    )
+    request = Request(
+        url,
+        headers={"Accept": "application/ld+json"},
+    )
+    with urlopen(request, timeout=_SEAVOX_REQUEST_TIMEOUT_SECONDS) as response:
+        vocabulary = json.loads(response.read())
+
+    concepts = vocabulary.get("@graph") if isinstance(vocabulary, dict) else None
+    if not isinstance(concepts, list):
+        raise ValueError(
+            f"SeaVoX {collection_id} response does not contain a concept list"
+        )
+
+    labels = set()
+    for concept in concepts:
+        if (
+            not isinstance(concept, dict)
+            or concept.get("@type") != "skos:Concept"
+            or concept.get("owl:deprecated") in (True, "true")
+        ):
+            continue
+        preferred_label = concept.get("skos:prefLabel")
+        if isinstance(preferred_label, dict):
+            if preferred_label.get("@language") != "en":
+                continue
+            preferred_label = preferred_label.get("@value")
+        if isinstance(preferred_label, str) and preferred_label.strip():
+            labels.add(preferred_label.strip())
+
+    if not labels:
+        raise ValueError(
+            f"SeaVoX {collection_id} response contains no preferred labels"
+        )
+    return frozenset(labels)
+
+def _get_seavox_preferred_labels(
+    collection_id: str,
+) -> tuple[Optional[frozenset[str]], Optional[str]]:
+    with _seavox_cache_lock:
+        cache_entry = _seavox_vocabulary_cache.setdefault(
+            collection_id, _SeavoxVocabularyCacheEntry()
+        )
+        now = time.monotonic()
+        if cache_entry.preferred_labels and now < cache_entry.expires_at:
+            return cache_entry.preferred_labels, None
+        if now < cache_entry.retry_at:
+            if cache_entry.preferred_labels:
+                return cache_entry.preferred_labels, (
+                    f"SeaVoX {collection_id} could not be refreshed; "
+                    "using the cached vocabulary."
+                )
+            return None, f"SeaVoX {collection_id} is temporarily unavailable."
+
+        try:
+            labels = _fetch_seavox_preferred_labels(collection_id)
+        except (OSError, HTTPException, ValueError) as exc:
+            cache_entry.retry_at = now + _SEAVOX_RETRY_SECONDS
+            _seavox_logger.warning(
+                "Could not load the SeaVoX %s vocabulary: %s", collection_id, exc
+            )
+            if cache_entry.preferred_labels:
+                return cache_entry.preferred_labels, (
+                    f"SeaVoX {collection_id} could not be refreshed; "
+                    "using the cached vocabulary."
+                )
+            return None, f"SeaVoX {collection_id} is temporarily unavailable."
+
+        cache_entry.preferred_labels = labels
+        cache_entry.expires_at = now + _SEAVOX_CACHE_TTL_SECONDS
+        cache_entry.retry_at = 0.0
+        return labels, None
+
+def _seavox_vocabulary_value_problem(
+    value: Any,
+    attribute: str,
+    collection_id: str,
+    vocabulary_name: str,
+    scope: str,
+    var_name: Optional[str] = None,
+) -> list[Problem]:
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+    is_empty = value is None or value == ""
+    link_text = f"{vocabulary_name} ({collection_id}) vocabulary"
+    if is_empty:
+        return []
+
+    labels, vocabulary_notice = _get_seavox_preferred_labels(collection_id)
+
+    if labels is not None and isinstance(value, str) and value in labels:
+        if vocabulary_notice is None:
+            return []
+        message = (
+            f"{attribute} matches the cached {link_text}, but it could not "
+            f"be refreshed. {vocabulary_notice}"
+        )
+    elif labels is None:
+        if not is_empty:
+            message = (
+                f"Could not check {attribute} against the {link_text}. "
+                f"{vocabulary_notice}"
+            )
+            if recommendation:
+                message = f"{message} {recommendation}"
+    else:
+        message = f"{attribute} should be in the {link_text}."
+        if vocabulary_notice:
+            message = f"{message} {vocabulary_notice}"
+
+    return [Problem(
+        scope=scope,
+        var_name=var_name,
+        field=attribute,
+        severity=WARNING,
+        message=message,
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=sorted(labels) if labels is not None else None,
+        link_text=link_text,
+        link_url=_seavox_collection_url(collection_id),
+        field_part="value",
+    )]
+
+def _seavox_vocabulary_problems(
+    record: Any, scope: str, var_name: Optional[str] = None
+) -> list[Problem]:
+    if not isinstance(record, dict):
+        return []
+
+    problems = []
+    for attribute, collection_id, vocabulary_name, container, recommendation in (
+        _SEAVOX_ATTRIBUTE_VOCABULARIES.get(scope, ())
+    ):
+        attributes = record.get(container) if container else record
+        if not isinstance(attributes, dict) or attribute not in attributes:
+            continue
+        problems.extend(_seavox_vocabulary_value_problem(
+            attributes[attribute],
+            attribute,
+            collection_id,
+            vocabulary_name,
+            scope,
+            var_name,
+        ))
+        if recommendation:
+            problems.append(Problem(
+                scope=scope,
+                var_name=var_name,
+                field=attribute,
+                severity=WARNING,
+                message=recommendation,
+                field_part="key",
+            ))
+    return problems
+    
 def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
     variable_names = {
         var.get("name")

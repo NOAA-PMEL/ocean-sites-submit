@@ -587,7 +587,12 @@ def register_callbacks(app):
         children = []
         for id_ in err_ids:
             p = _lookup(id_)
-            children.append(_err_text(p['message'], p['severity']) if p and p['field'] == id_['field'] else [])
+            children.append(
+                _err_text(
+                    p['message'], p['severity'], p.get('link_text'), p.get('link_url')
+                )
+                if p and p['field'] == id_['field'] else []
+            )
 
         classes = []
         for id_ in wrap_ids:
@@ -607,7 +612,10 @@ def register_callbacks(app):
                 if uid == id_['index']
             }
             record_errors.append([
-                _err_text(problem['message'], problem['severity'])
+                _err_text(
+                    problem['message'], problem['severity'],
+                    problem.get('link_text'), problem.get('link_url')
+                )
                 for field, problem in field_problems.items()
                 if field not in visible_fields and field not in extra_fields
             ])
@@ -618,7 +626,11 @@ def register_callbacks(app):
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
             problem = by_name.get(var_name, {}).get(field)
             extra_attr_errors.append(
-                _err_text(problem['message'], problem['severity']) if problem else []
+                _err_text(
+                    problem['message'], problem['severity'],
+                    problem.get('link_text'), problem.get('link_url')
+                )
+                if problem else []
             )
 
         extra_attr_value_classes = []
