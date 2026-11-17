@@ -28,6 +28,16 @@
     background-color: rgba(247, 180, 79, .04) !important;
 }
 
+.nc-extra-attr-key.is-error {
+    border-color: rgba(255, 77, 77, 0.7) !important;
+    background-color: rgba(42, 18, 21, 0.3) !important;
+}
+
+.nc-extra-attr-key.is-warning {
+    border-color: rgba(247, 180, 79, .55) !important;
+    background-color: rgba(247, 180, 79, .04) !important;
+}
+
 .metadata-save-status:not(:empty) { padding-bottom: 12px !important; }
 
 /* For metadata validation - variables err */

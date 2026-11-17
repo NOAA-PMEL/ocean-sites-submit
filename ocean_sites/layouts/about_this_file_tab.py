@@ -293,23 +293,38 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
             ],
         )
 
+    key_input = dcc.Input(
+        id=key_id,
+        className='nc-var-extra-attr-key' if var_uid is not None else 'nc-extra-attr-key',
+        type='text',
+        value=key,
+        placeholder='attribute name',
+        debounce=True,
+        disabled=removed,
+        style={
+            **_input_style,
+            'flex': '1',
+            'fontFamily': 'monospace',
+            'fontSize': '12px',
+            **strike
+        },
+    )
+    if var_uid is None:
+        key_input = html.Div(
+            style={'display': 'flex', 'flexDirection': 'column', 'flex': '1', 'minWidth': 0},
+            children=[
+                key_input,
+                html.Div(
+                    id={'type': 'nc-extra-attr-key-err', 'index': uid},
+                    className='nc-field-err',
+                    children=[],
+                ),
+            ],
+        )
+
     return [
         dot,
-        dcc.Input(
-            id=key_id,
-            type='text',
-            value=key,
-            placeholder='attribute name',
-            debounce=True,
-            disabled=removed,
-            style={
-                **_input_style,
-                'flex': '1', 
-                'fontFamily': 'monospace',
-                'fontSize': '12px',
-                **strike
-            },
-        ),
+        key_input,
         value_input,
         html.Span(
             className='nc-field-dot',

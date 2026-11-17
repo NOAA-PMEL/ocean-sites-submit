@@ -21,6 +21,9 @@ Each problem is a plain dict (JSON-safe, so it round-trips through dcc.Store):
         'message':          'Data Mode is required',
         'invalid_value':    'Realtime' | None,
         'valid_options':    ['R', 'P', 'D', 'M'] | None,
+        'field_part':      'key' | 'value' | None,
+        'link_text':        str | None,
+        'link_url':         str | None,
         'also_fields':      ['geospatial_lat_min'] # highlight, but don't repeat the message (for when error is related to two related fields.)   
     }
 """
@@ -75,10 +78,31 @@ _SEAVOX_REQUEST_TIMEOUT_SECONDS = 2
 _seavox_logger = logging.getLogger(__name__)
 _seavox_cache_lock = threading.Lock()
 
-# Entries map a field name, collection code, display name, and optional nested dict.
+# Entries map field, collection, display name, optional nested dict, and advice.
 _SEAVOX_ATTRIBUTE_VOCABULARIES = {
     GLOBAL: (
-        ("source", "L06", "SeaVoX Platform Categories", "extra_global_attrs"),
+        (
+            "source",
+            "L06",
+            "SeaVoX Platform Categories",
+            "extra_global_attrs",
+            None,
+        ),
+        (
+            "area",
+            "C19",
+            "SeaVoX salt and fresh water body gazetteer",
+            "extra_global_attrs",
+            "Consider renaming the 'area' attribute to 'sea area' to match "
+            "the OceanSITES v1.4 manual.",
+        ),
+        (
+            "sea area",
+            "C19",
+            "SeaVoX salt and fresh water body gazetteer",
+            "extra_global_attrs",
+            None,
+        ),
     ),
     VARIABLE: (),
 }
@@ -281,11 +305,12 @@ class Problem:
     also_fields: tuple = ()
     link_text: Optional[str] = None
     link_url: Optional[str] = None
+    field_part: Optional[str] = None
 
     @property
     def key(self):
-        """Idenitty for de-duplication: one problem per field per record."""
-        return (self.scope, self.var_name, self.field)
+        """Identity for de-duplication: one problem per input part per record."""
+        return (self.scope, self.var_name, self.field, self.field_part)
 
 # --------------------------------------------------------------
 # Normalisation
@@ -1002,27 +1027,30 @@ def _seavox_vocabulary_value_problem(
         value = value.decode(errors="replace")
     if isinstance(value, str):
         value = value.strip()
-    if value is None or value == "":
+    is_empty = value is None or value == ""
+    link_text = f"{vocabulary_name} ({collection_id}) vocabulary"
+    if is_empty:
         return []
 
     labels, vocabulary_notice = _get_seavox_preferred_labels(collection_id)
+
     if labels is not None and isinstance(value, str) and value in labels:
         if vocabulary_notice is None:
             return []
         message = (
-            f"{attribute} matches the cached {vocabulary_name} ({collection_id}) "
-            f"vocabulary, but it could not be refreshed. {vocabulary_notice}"
+            f"{attribute} matches the cached {link_text}, but it could not "
+            f"be refreshed. {vocabulary_notice}"
         )
     elif labels is None:
-        message = (
-            f"Could not check {attribute} against the {vocabulary_name} "
-            f"({collection_id}) vocabulary. {vocabulary_notice}"
-        )
+        if not is_empty:
+            message = (
+                f"Could not check {attribute} against the {link_text}. "
+                f"{vocabulary_notice}"
+            )
+            if recommendation:
+                message = f"{message} {recommendation}"
     else:
-        message = (
-            f"{attribute} should appear in the {vocabulary_name} "
-            f"({collection_id}) vocabulary."
-        )
+        message = f"{attribute} should be in the {link_text}."
         if vocabulary_notice:
             message = f"{message} {vocabulary_notice}"
 
@@ -1034,8 +1062,9 @@ def _seavox_vocabulary_value_problem(
         message=message,
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=sorted(labels) if labels is not None else None,
-        link_text=f"{vocabulary_name} ({collection_id}) vocabulary",
+        link_text=link_text,
         link_url=_seavox_collection_url(collection_id),
+        field_part="value",
     )]
 
 def _seavox_vocabulary_problems(
@@ -1045,7 +1074,7 @@ def _seavox_vocabulary_problems(
         return []
 
     problems = []
-    for attribute, collection_id, vocabulary_name, container in (
+    for attribute, collection_id, vocabulary_name, container, recommendation in (
         _SEAVOX_ATTRIBUTE_VOCABULARIES.get(scope, ())
     ):
         attributes = record.get(container) if container else record
@@ -1059,6 +1088,15 @@ def _seavox_vocabulary_problems(
             scope,
             var_name,
         ))
+        if recommendation:
+            problems.append(Problem(
+                scope=scope,
+                var_name=var_name,
+                field=attribute,
+                severity=WARNING,
+                message=recommendation,
+                field_part="key",
+            ))
     return problems
     
 def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:

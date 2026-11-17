@@ -357,6 +357,8 @@ def register_callbacks(app):
     @app.callback(
         Output({'type': 'nc-field-err', 'field': ALL}, 'children'),
         Output({'type': 'nc-field-wrap', 'field': ALL}, 'className'),
+        Output({'type': 'nc-extra-attr-key-err', 'index': ALL}, 'children'),
+        Output({'type': 'nc-extra-attr-key', 'index': ALL}, 'className'),
         Output({'type': 'nc-extra-attr-err', 'index': ALL}, 'children'),
         Output({'type': 'nc-extra-attr-value', 'index': ALL}, 'className'),
         Input('metadata-problems-store', 'data'),
@@ -378,12 +380,21 @@ def register_callbacks(app):
 
         err_fields = [m['id']['field'] for m in ctx.outputs_list[0]]
         wrap_fields = [m['id']['field'] for m in ctx.outputs_list[1]]
-        extra_attr_err_ids = [m['id'] for m in ctx.outputs_list[2]]
-        extra_attr_value_ids = [m['id'] for m in ctx.outputs_list[3]]
+        extra_attr_key_err_ids = [m['id'] for m in ctx.outputs_list[2]]
+        extra_attr_key_class_ids = [m['id'] for m in ctx.outputs_list[3]]
+        extra_attr_err_ids = [m['id'] for m in ctx.outputs_list[4]]
+        extra_attr_value_ids = [m['id'] for m in ctx.outputs_list[5]]
         extra_attr_keys = {
             id_['index']: (value or '').strip()
             for id_, value in zip(extra_attr_key_ids or [], extra_attr_key_values or [])
         }
+        extra_attr_problems = {}
+        for problem in problems or []:
+            if problem['scope'] != 'global':
+                continue
+            field = problem['field']
+            part = problem.get('field_part') or 'value'
+            extra_attr_problems.setdefault(field, {})[part] = problem
 
         children = []
         for f in err_fields:
@@ -402,10 +413,33 @@ def register_callbacks(app):
             p = by_field.get(f)
             classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
 
+        extra_attr_key_errors = []
+        for id_ in extra_attr_key_err_ids:
+            field = extra_attr_keys.get(id_['index'])
+            p = extra_attr_problems.get(field, {}).get('key')
+            extra_attr_key_errors.append(
+                _err_text(p['message'], p['severity'])
+                if p else []
+            )
+
+        extra_attr_key_classes = []
+        for id_ in extra_attr_key_class_ids:
+            field = extra_attr_keys.get(id_['index'])
+            p = extra_attr_problems.get(field, {}).get('key')
+            extra_attr_key_classes.append(
+                f"nc-extra-attr-key is-{p['severity']}"
+                if p else 'nc-extra-attr-key'
+            )
+
         extra_attr_errors = []
         for id_ in extra_attr_err_ids:
             field = extra_attr_keys.get(id_['index'])
-            p = by_field.get(field)
+            field_problems = extra_attr_problems.get(field)
+            p = (
+                field_problems.get('value')
+                if field_problems is not None
+                else by_field.get(field)
+            )
             extra_attr_errors.append(
                 _err_text(
                     p['message'], p['severity'], p.get('link_text'), p.get('link_url')
@@ -416,10 +450,22 @@ def register_callbacks(app):
         extra_attr_value_classes = []
         for id_ in extra_attr_value_ids:
             field = extra_attr_keys.get(id_['index'])
-            p = by_field.get(field)
+            field_problems = extra_attr_problems.get(field)
+            p = (
+                field_problems.get('value')
+                if field_problems is not None
+                else by_field.get(field)
+            )
             extra_attr_value_classes.append(
                 f"nc-extra-attr-value is-{p['severity']}"
                 if p else 'nc-extra-attr-value'
             )
      
-        return children, classes, extra_attr_errors, extra_attr_value_classes
+        return (
+            children,
+            classes,
+            extra_attr_key_errors,
+            extra_attr_key_classes,
+            extra_attr_errors,
+            extra_attr_value_classes,
+        )
