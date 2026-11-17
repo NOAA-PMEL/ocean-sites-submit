@@ -581,6 +581,7 @@ def _validate_variable(var: dict) -> list:
                 scope=VARIABLE,
                 var_name=name,
                 field="flag_values",
+                severity=WARNING,
                 message=(
                     f"{label} flag values and meanings must match the required mapping: "
                     f"{', '.join(expected_values)} maps in order to "
@@ -780,7 +781,7 @@ def _global_qc_indicator_problems(global_attrs: dict) -> list[Problem]:
         field="QC_indicator",
         severity=WARNING,
         message=(
-            "Global QC_indicator must be one of: "
+            "Global QC_indicator should be one of: "
             f"{', '.join(valid_options)}."
         ),
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
@@ -805,8 +806,9 @@ def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
         scope=VARIABLE,
         var_name=name,
         field="QC_indicator",
+        severity=WARNING,
         message=(
-            "QC_indicator must be one of: "
+            "QC_indicator should be one of: "
             f"{', '.join(_QC_INDICATOR_VALUES)}."
         ),
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
@@ -842,7 +844,8 @@ def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
             scope=VARIABLE,
             var_name=name,
             field=field,
-            message=f"{field} must be one of: {', '.join(valid_options)}.",
+            severity=WARNING,
+            message=f"{field} should be one of: {', '.join(valid_options)}.",
             invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
             valid_options=list(valid_options),
         ))
