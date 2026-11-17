@@ -93,11 +93,11 @@ _SEAVOX_ATTRIBUTE_VOCABULARIES = {
             "C19",
             "SeaVoX salt and fresh water body gazetteer",
             "extra_global_attrs",
-            "Consider renaming the 'area' attribute to 'sea area' to match "
+            "Consider renaming the 'area' attribute to 'sea_area' to match "
             "the OceanSITES v1.4 manual.",
         ),
         (
-            "sea area",
+            "sea_area",
             "C19",
             "SeaVoX salt and fresh water body gazetteer",
             "extra_global_attrs",
