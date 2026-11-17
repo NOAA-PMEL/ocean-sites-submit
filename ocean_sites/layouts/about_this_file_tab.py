@@ -1,3 +1,4 @@
+from typing import Optional
 from dash import html, dcc
 from portal_core.utils import _section_label
 from portal_core.constants import (
@@ -142,7 +143,12 @@ def _field_block(label: str, nc_key: str, field_key: str, component):
         ]
     )
 
-def _err_text(message: str, severity: str):
+def _err_text(
+    message: str,
+    severity: str,
+    link_text: Optional[str] = None,
+    link_url: Optional[str] = None,
+):
     """
     Renders clean, minimal inline validation text below field elements.
     """
@@ -151,6 +157,20 @@ def _err_text(message: str, severity: str):
         
     is_error = severity == 'error'
     text_color = '#ff4d4d' if is_error else '#f7b44f'
+    message_children = [html.Span(message)]
+    if link_text and link_url and link_text in message:
+        before, _, after = message.partition(link_text)
+        message_children = []
+        if before:
+            message_children.append(html.Span(before))
+        message_children.append(html.A(
+            link_text,
+            href=link_url,
+            target='_blank',
+            rel='noopener noreferrer',
+        ))
+        if after:
+            message_children.append(html.Span(after))
 
     return html.Div(
         style={
@@ -164,7 +184,7 @@ def _err_text(message: str, severity: str):
         },
         children=[
             html.Span("✕" if is_error else "⚠️", style={'fontSize': '10px'}),
-            html.Span(message)
+            html.Span(message_children)
         ]
     )
 # -----------------------------------------------------------------------------

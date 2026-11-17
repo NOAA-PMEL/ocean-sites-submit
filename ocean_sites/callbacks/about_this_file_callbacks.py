@@ -390,7 +390,12 @@ def register_callbacks(app):
             p = by_field.get(f)
             # A field named only in another problems' also_fields gets the color
             # but no a duplicate copy of the message
-            children.append(_err_text(p['message'], p['severity']) if p and p['field'] == f else [])
+            children.append(
+                _err_text(
+                    p['message'], p['severity'], p.get('link_text'), p.get('link_url')
+                )
+                if p and p['field'] == f else []
+            )
 
         classes = []
         for f in wrap_fields:
@@ -402,7 +407,9 @@ def register_callbacks(app):
             field = extra_attr_keys.get(id_['index'])
             p = by_field.get(field)
             extra_attr_errors.append(
-                _err_text(p['message'], p['severity'])
+                _err_text(
+                    p['message'], p['severity'], p.get('link_text'), p.get('link_url')
+                )
                 if p and p['field'] == field else []
             )
 
