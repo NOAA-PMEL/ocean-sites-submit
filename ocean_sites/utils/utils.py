@@ -265,11 +265,15 @@ def load_ocean_sites_metadata(session, submission_id: str) -> Optional[dict]:
     ).scalar_one_or_none()
 
     dimension_rows = session.execute(
-        select(NetcdfDimension).where(NetcdfDimension.oads_metadata_id == oads_metadata_id)
+        select(NetcdfDimension)
+        .where(NetcdfDimension.oads_metadata_id == oads_metadata_id)
+        .order_by(NetcdfDimension.id)
     ).scalars().all()
 
     variable_rows = session.execute(
-        select(NetcdfVariable).where(NetcdfVariable.oads_metadata_id == oads_metadata_id)
+        select(NetcdfVariable)
+        .where(NetcdfVariable.oads_metadata_id == oads_metadata_id)
+        .order_by(NetcdfVariable.id)
     ).scalars().all()
 
     if global_attrs_row is None and not dimension_rows and not variable_rows:
