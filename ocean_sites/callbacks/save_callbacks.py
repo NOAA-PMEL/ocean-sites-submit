@@ -20,6 +20,7 @@ from ocean_sites.utils import (
 from ocean_sites.layouts import(
     build_ledger_children,
 )
+from ocean_sites.utils.utils import _sanitize_for_json
 from portal_core.constants import (
     _OVERLAY_HIDDEN, 
     _PANEL_CLOSED, 
@@ -110,7 +111,7 @@ def register_callbacks(app):
         try:
             # Instantiate parser directly from disk location—no base64 string splitting needed!
             parser = OceanSitesNetcdfParser(file_path)
-            metadata_dict = copy.deepcopy(parser.metadata_dict)
+            metadata_dict = _sanitize_for_json(copy.deepcopy(parser.metadata_dict))
             # Convert variable dimensions from lists to space-separated strings
             # to line up with the validator expectations from day one.
             for var in metadata_dict.get('variables', []):
@@ -128,7 +129,7 @@ def register_callbacks(app):
         # Parsing succeeded- persis it. so DB failure is report distincly from parsing failure
         try:
             with Session(postgres_engine) as session:
-                # Automatically save parser.metadata_dict to DB (since this will the OG data)
+                # Save the normalized metadata as the original snapshot.
                 issues = save_all_ocean_sites_metadata(
                     session=session,
                     submission_id=state_current_submission,
@@ -144,9 +145,9 @@ def register_callbacks(app):
                 style={'color': '#f76f6f', 'fontSize': '12px', 'marginTop': '8px', 'fontWeight': 'bold'}
             ), no_update, no_update
         
-        return parser.metadata_dict, parser.metadata_dict, html.Div(
+        return metadata_dict, metadata_dict, html.Div(
                 f"✅ Successfully parsed metadata from {filename} "
-                f"({len(parser.metadata_dict.get('variables', []))} variables, {len(parser.metadata_dict.get('dimensions', []))} dimensions) "
+                f"({len(metadata_dict.get('variables', []))} variables, {len(metadata_dict.get('dimensions', []))} dimensions) "
                 f"Please review metadata in step 3.",
                 style={'color': '#38d9a9', 'fontSize': '12px', 'marginTop': '8px', 'fontWeight': 'bold'},
             ), metadata_dict, metadata_dict
