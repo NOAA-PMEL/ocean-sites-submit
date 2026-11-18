@@ -551,10 +551,11 @@ def _validate_variable(var: dict) -> list:
         )
         
     problems.extend(_seavox_vocabulary_problems(cleaned_var, VARIABLE, name))
+    problems.extend(_qc_indicator_problems(name, cleaned_var))
+    problems.extend(_dm_indicator_problems(name, cleaned_var))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
-        problems.extend(_qc_indicator_problems(name, cleaned_var))
         
     if var_type != "coordinate":
         problems.extend(_sensor_attribute_problems(name, cleaned_var))
@@ -813,6 +814,33 @@ def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
         ),
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=list(_QC_INDICATOR_VALUES),
+    )]
+
+def _dm_indicator_problems(name: str, var: dict) -> list[Problem]:
+    extra_attrs = var.get("extra_attrs")
+    if not isinstance(extra_attrs, dict) or "DM_indicator" not in extra_attrs:
+        return []
+
+    value = extra_attrs["DM_indicator"]
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+
+    if isinstance(value, str) and value in _DM_FLAG_VALUES:
+        return []
+
+    return [Problem(
+        scope=VARIABLE,
+        var_name=name,
+        field="DM_indicator",
+        severity=WARNING,
+        message=(
+            "DM_indicator should be one of: "
+            f"{', '.join(_DM_FLAG_VALUES)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=list(_DM_FLAG_VALUES),
     )]
 
 def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
