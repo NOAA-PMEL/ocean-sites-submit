@@ -502,7 +502,7 @@ def register_callbacks(app):
         """
         Severity counts stay visible on collapsed cards whose bodies mount lazily.
         """
-        problems = _visible_problems(problems, mode, submission_id)
+        #problems = _visible_problems(problems, mode, submission_id)
         error_counts = error_count_by_variable(problems)
         warning_counts = warning_count_by_variable(problems)
         name_by_uid = {v['uid']: v.get('name') for v in (vars_store or [])}
@@ -567,7 +567,7 @@ def register_callbacks(app):
     def update_var_field_errors(
         problems, mode, submission_id, body_styles, vars_store, extra_attr_key_ids, extra_attr_key_values
     ):
-        problems = _visible_problems(problems, mode, submission_id)
+        #problems = _visible_problems(problems, mode, submission_id)
         by_name = variable_problems_by_name(problems)
         name_by_uid = {v['uid']: v.get('name') for v in (vars_store or [])}
 
