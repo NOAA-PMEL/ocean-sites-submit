@@ -620,11 +620,12 @@ def register_callbacks(app):
     def update_sidebar_counts(problems, mode, submission_id):
         loud = bool(submission_id) and (mode or {}).get('loud_for') == submission_id
         all_problems = problems or []
-        counted_errors = (
-            all_problems
-            if loud
-            else [p for p in all_problems if p['kind'] == 'missing']
-        )
+        counted_errors = all_problems
+        #counted_errors = (
+        #    all_problems
+        #    if loud
+        #    else [p for p in all_problems if p['kind'] == 'missing']
+        #)
 
         error_counts = {}
         for p in counted_errors:
