@@ -339,6 +339,7 @@ def _attr_inputs_for_type(uid: str, var_type: str, attributes: dict):
     if var_type == 'data':
         return [
             _field('Standard name', _inp({'type': 'nc-var-standard-name', 'index': uid}, 'CF  standard name', 'standard_name'), field_key='standard_name'),
+            _field('Long name', _inp({'type': 'nc-var-long-name', 'index': uid}, 'Descriptive name', 'long_name'), field_key='long_name'),
             _field('Units', _inp({'type': 'nc-var-units', 'index': uid}, 'e.g. meters', 'units'), field_key='units'),
             _field('Fill value', _inp({'type': 'nc-var-fill-value', 'index': uid}, 'e.g. NaNf', 'fill_value', monospace=True), field_key='fill_value'),
             _field('Coordinates', _inp({'type': 'nc-var-coordinates', 'index': uid}, 'e.g. TIME LATITUDE LONGITUDE', 'coordinates', monospace=True), span=2, field_key='coordinates'),

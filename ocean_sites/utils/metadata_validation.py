@@ -1089,6 +1089,9 @@ def _seavox_vocabulary_value_problem(
     scope: str,
     var_name: Optional[str] = None,
 ) -> list[Problem]:
+
+    recommendation = None
+
     if isinstance(value, bytes):
         value = value.decode(errors="replace")
     if isinstance(value, str):

@@ -353,6 +353,9 @@ class NetcdfVariable(Base):
     standard_name: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, info={"label": "Standard Name"}
     )
+    long_name: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, info={"label": "Long Name"}
+    )
     units: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, info={"label": "Units"}
     )
@@ -422,10 +425,18 @@ class NetcdfCoordinateVariableSchema(NetcdfVariableBaseSchema):
 class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for data variables"""
     var_type: VarType = VarType.DATA
-    standard_name: str
+    standard_name: Optional[str] = None
+    long_name: Optional[str] = None
     units: str
     fill_value: str
     coordinates: str
+    
+    @model_validator(mode='after')
+    def check_names(self):
+        # check if the data variable contains either standard_name of long name
+        if not self.standard_name and not self.long_name:
+            raise ValueError('Either standard_name or long_name must be provided.')
+        return self
 
 class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for QC variables"""
