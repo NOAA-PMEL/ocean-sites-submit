@@ -433,23 +433,26 @@ def build_variables_list(
         elif var_type == "coordinate":
             variable_dict.update({
                 "standard_name": live_or_stored(standard_name_map, 'standard_name'),
+                "long_name": live_or_stored(long_name_map, 'long_name'),
                 "units": live_or_stored(units_map, 'units'),
                 "axis": live_or_stored(axis_map, 'axis'),
             })
         elif var_type == "qc":
             variable_dict.update({
-                "units": live_or_stored(units_map, 'units'),
+                "long_name": live_or_stored(long_name_map, 'long_name'),
                 "fill_value": live_or_stored(fill_values_map, "fill_value"),
                 "flag_values": live_or_stored(flag_values_map, 'flag_values'),
                 "flag_meanings": live_or_stored(flag_meanings_map, 'flag_meanings'),
             })
         elif var_type == "dm":
             variable_dict.update({
+                "long_name": live_or_stored(long_name_map, 'long_name'),
                 "flag_values": live_or_stored(flag_values_map, 'flag_values'),
                 "flag_meanings": live_or_stored(flag_meanings_map, 'flag_meanings'),
             })
         elif var_type == "uncertainty":
             variable_dict.update({
+                "long_name": live_or_stored(long_name_map, 'long_name'),
                 "units": live_or_stored(units_map, 'units'),
                 "fill_value": live_or_stored(fill_values_map, 'fill_value'),
             })

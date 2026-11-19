@@ -430,13 +430,6 @@ class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
     units: str
     fill_value: str
     coordinates: str
-    
-    @model_validator(mode='after')
-    def check_names(self):
-        # check if the data variable contains either standard_name of long name
-        if not self.standard_name and not self.long_name:
-            raise ValueError('Either standard_name or long_name must be provided.')
-        return self
 
 class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for QC variables"""

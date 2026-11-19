@@ -39,6 +39,8 @@ from http.client import HTTPException
 from typing import Any, Optional
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+import requests
+import xml.etree.ElementTree as ET
 from pydantic import ValidationError
 from ocean_sites.models import (
     NetcdfGlobalAttributes,
@@ -71,6 +73,50 @@ _SCHEMA_BY_VAR_TYPE = {
     "dm": NetcdfDMVariableSchema,
     "uncertainty": NetcdfUncertaintyVariableSchema
 }
+
+_OCEANSITES_PARAMETER_MAP = {
+    "AIRT": "air_temperature",
+    "CAPH": "air_pressure",
+    "CDIR": "direction_of_sea_water_velocity",
+    "CNDC": "sea_water_electrical_conductivity",
+    "CSPD": "sea_water_speed",
+    "DEPTH": "depth",
+    "DEWT": "dew_point_temperature",
+    "DOX2": "moles_of_oxygen_per_unit_mass_in_sea_water",
+    "DOXY": "mass_concentration_of_oxygen_in_sea_water",
+    "DOXY_TEMP": "temperature_of_sensor_for_oxygen_in_sea_water",
+    "DYNHT": "dynamic_height",
+    "FLU2": "fluorescence",
+    "HCSP": "sea_water_speed",
+    "HEAT": "heat_content",
+    "ISO17": "isotherm_depth",
+    "LW": "surface_downwelling_longwave_flux_in_air",
+    "OPBS": "optical_backscattering_coefficient",
+    "PCO2": "surface_partial_pressure_of_carbon_dioxide_in_air",
+    "PRES": "sea_water_pressure",
+    "PSAL": "sea_water_practical_salinity",
+    "RAIN": "rainfall_rate",
+    "RAIT": "thickness_of_rainfall_amount",
+    "RELH": "relative_humidity",
+    "SDFA": "surface_downwelling_shortwave_flux_in_air",
+    "SRAD": "isotropic_shortwave_radiance_in_air",
+    "SW": "surface_downwelling_shortwave_flux_in_air",
+    "TEMP": "sea_water_temperature",
+    "UCUR": "eastward_sea_water_velocity",
+    "UWND": "eastward_wind",
+    "VAVH": "sea_surface_wave_significant_height",
+    "VAVT": "sea_surface_wave_zero_upcrossing_period",
+    "VCUR": "northward_sea_water_velocity",
+    "VDEN": "sea_surface_wave_variance_spectral_density",
+    "VDIR": "sea_surface_wave_from_direction",
+    "VWND": "northward_wind",
+    "WDIR": "wind_to_direction",
+    "WSPD": "wind_speed"
+}
+
+_OCEANSITES_REVERSE_MAP = {}
+for param, cf_name in _OCEANSITES_PARAMETER_MAP.items():
+    _OCEANSITES_REVERSE_MAP.setdefault(cf_name, []).append(param)
 
 _SEAVOX_CACHE_TTL_SECONDS = 24 * 60 * 60
 _SEAVOX_RETRY_SECONDS = 15 * 60
@@ -553,6 +599,7 @@ def _validate_variable(var: dict) -> list:
     problems.extend(_seavox_vocabulary_problems(cleaned_var, VARIABLE, name))
     problems.extend(_qc_indicator_problems(name, cleaned_var))
     problems.extend(_dm_indicator_problems(name, cleaned_var))
+    problems.extend(_data_variable_name_problems(name, cleaned_var))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
@@ -1168,6 +1215,143 @@ def _seavox_vocabulary_problems(
             ))
     return problems
     
+_CF_CACHE = None
+_CF_CACHE_TIME = 0.0
+
+def _get_cf_standard_names() -> set[str]:
+    global _CF_CACHE, _CF_CACHE_TIME
+    now = time.monotonic()
+    
+    # Cache for 24 hours
+    if _CF_CACHE is not None and (now - _CF_CACHE_TIME < 86400):
+        return _CF_CACHE
+
+    try:
+        url = "https://cfconventions.org/Data/cf-standard-names/current/src/cf-standard-name-table.xml"
+        response = requests.get(url, timeout=5)
+        response.raise_for_status() # Raise an error if we get a 403/404
+        
+        root = ET.fromstring(response.content)
+        names = {
+            child.attrib["id"] 
+            for child in root 
+            if child.tag.endswith(("entry", "alias")) and "id" in child.attrib
+        }
+        _CF_CACHE = names
+        _CF_CACHE_TIME = now
+        return names
+    except Exception as e:
+        # Fails silently and falls back to whatever was cached
+        print(f"CF FETCH ERROR: {e}")
+        return _CF_CACHE or set()
+
+def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
+    """Validates standard_name, long_name, and Parameter code mappings for Data Variables."""
+    if var.get("var_type") != "data":
+        return []
+
+    problems = []
+    
+    standard_name = var.get("standard_name")
+    if isinstance(standard_name, str): standard_name = standard_name.strip() or None
+    
+    long_name = var.get("long_name")
+    if isinstance(long_name, str): long_name = long_name.strip() or None
+
+    if not standard_name and not long_name:
+        # Paint the standard_name box red
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="standard_name",
+            severity=ERROR,
+            message="Either standard_name or long_name must be provided."
+        ))
+
+    # Note: Pydantic already enforces that at least ONE is present, so we just check validity.
+    active_name = None
+    cf_names = _get_cf_standard_names()
+
+    cf_link_text = "CF Standard Name Table"
+    cf_link_url = "https://cfconventions.org/Data/cf-standard-names/current/build/cf-standard-name-table.html"
+
+    # 1. Verify CF Standard Name legitimacy
+    if not cf_names:
+        # THE NETWORK CHECK: If the list is empty, warn the user instead of failing silently!
+        problems.append(Problem(
+            scope=VARIABLE, 
+            var_name=name, 
+            field="standard_name" if standard_name else "long_name", 
+            severity=WARNING,
+            message=f"Could not reach the server to validate this name against the {cf_link_text}. Network connection failed.",
+            link_text=cf_link_text,
+            link_url=cf_link_url
+        ))
+        active_name = standard_name or long_name
+    else:
+        if standard_name:
+            if cf_names and standard_name not in cf_names:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="standard_name",
+                    severity=ERROR,
+                    message=(
+                        f"'{standard_name}' is not in the official {cf_link_text}. "
+                        "If this is a non-standard parameter, please clear this field and use "
+                        "the 'Long Name' attribute instead."
+                    ),
+                    link_text=cf_link_text,
+                    link_url=cf_link_url
+                ))
+                active_name = long_name or standard_name  # fallback for the mapping checks
+            else:
+                active_name = standard_name
+        else:
+            if long_name and cf_names and long_name in cf_names:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="long_name",
+                    severity=ERROR,
+                    message=(
+                        f"'{long_name}' is a valid CF standard name. "
+                        "We recommend moving it to the 'Standard name' field."
+                    )
+                ))
+            active_name = long_name
+
+    # 2. Cross-reference checks against the OceanSITES manual
+    param_code = str(name).strip().upper()
+    
+    # Check if the parameter code matches the expected long_name / standard_name
+    expected_active = _OCEANSITES_PARAMETER_MAP.get(param_code)
+    if expected_active and active_name and active_name != expected_active:
+        field = "standard_name" if standard_name else "long_name"
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field=field,
+            severity=WARNING,
+            message=f"Parameter '{param_code}' typically uses the name '{expected_active}'.",
+            valid_options=[expected_active]
+        ))
+
+    # Check if the provided name expects a different parameter code
+    if active_name in _OCEANSITES_REVERSE_MAP:
+        expected_params = _OCEANSITES_REVERSE_MAP[active_name]
+        if param_code not in expected_params:
+            field = "standard_name" if standard_name else "long_name"
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=field,
+                severity=WARNING,
+                message=f"Name '{active_name}' is normally associated with parameter code(s): {', '.join(expected_params)}."
+            ))
+
+    return problems
+        
 def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
     variable_names = {
         var.get("name")

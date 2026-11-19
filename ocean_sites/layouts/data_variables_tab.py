@@ -347,21 +347,25 @@ def _attr_inputs_for_type(uid: str, var_type: str, attributes: dict):
     elif var_type == 'coordinate':
         return [
             _field('Standard name', _inp({'type': 'nc-var-standard-name', 'index': uid}, 'CF  standard name', 'standard_name'), field_key='standard_name'),
+            _field('Long name', _inp({'type': 'nc-var-long-name', 'index': uid}, 'Descriptive name', 'long_name'), field_key='long_name'),
             _field('Units', _inp({'type': 'nc-var-units', 'index': uid}, 'e.g. meters', 'units'), field_key='units'),
             _field('Axis', _inp({'type': 'nc-var-axis', 'index': uid}, 'x / Y / Z / T', 'axis', monospace=True), field_key='axis'),
         ]
     elif var_type == 'qc':
         return [
+            _field('Long name', _inp({'type': 'nc-var-long-name', 'index': uid}, 'Descriptive name', 'long_name'), field_key='long_name'),
             _field('Flag values', _inp({'type': 'nc-var-flag-values', 'index': uid}, 'e.g. 0b, 1b, 2b, 3b, 4b, 7b, 8b, 9b', 'flag_values', monospace=True), span=3, field_key='flag_values'),
             _field('Flag meanings', _inp({'type': 'nc-var-flag-meanings', 'index': uid}, 'e.g. unknown good_data probably_good_data potentially_correctable_bad_data bad_data nominal_value interpolated_value missing_value', 'flag_meanings', monospace=True), span=3, field_key='flag_meanings'),
         ]
     elif var_type == 'dm':
         return [
+            _field('Long name', _inp({'type': 'nc-var-long-name', 'index': uid}, 'Descriptive name', 'long_name'), field_key='long_name'),
             _field('Flag values', _inp({'type': 'nc-var-flag-values', 'index': uid}, 'R, P, D', 'flag_values', monospace=True), span=3, field_key='flag_values'),
             _field('Flag meanings', _inp({'type': 'nc-var-flag-meanings', 'index': uid}, 'real-time provisional delayed-mode', 'flag_meanings', monospace=True), span=3, field_key='flag_meanings'),
         ]
     elif var_type == 'uncertainty':
         return [
+            _field('Long name', _inp({'type': 'nc-var-long-name', 'index': uid}, 'Descriptive name', 'long_name'), field_key='long_name'),
             _field('Units', _inp({'type': 'nc-var-units', 'index': uid}, 'Must match the paired data variable', 'units'), field_key='units'),
             _field('Fill value', _inp({'type': 'nc-var-fill-value', 'index': uid}, 'NetCDF Float fill value', 'fill_value', monospace=True), field_key='fill_value'),
         ]
