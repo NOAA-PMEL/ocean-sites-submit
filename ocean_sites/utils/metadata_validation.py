@@ -30,6 +30,7 @@ Each problem is a plain dict (JSON-safe, so it round-trips through dcc.Store):
 from __future__ import annotations
 
 import json
+import os
 import logging
 import math
 import threading
@@ -117,12 +118,6 @@ _OCEANSITES_PARAMETER_MAP = {
 _OCEANSITES_REVERSE_MAP = {}
 for param, cf_name in _OCEANSITES_PARAMETER_MAP.items():
     _OCEANSITES_REVERSE_MAP.setdefault(cf_name, []).append(param)
-
-_SEAVOX_CACHE_TTL_SECONDS = 24 * 60 * 60
-_SEAVOX_RETRY_SECONDS = 15 * 60
-_SEAVOX_REQUEST_TIMEOUT_SECONDS = 2
-_seavox_logger = logging.getLogger(__name__)
-_seavox_cache_lock = threading.Lock()
 
 # Entries map field, collection, display name, optional nested dict, and advice.
 _SEAVOX_ATTRIBUTE_VOCABULARIES = {
@@ -541,6 +536,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
             for p in _problems_from_error(err, GLOBAL, _GLOBAL_LABELS, _GLOBAL_FIELDS):
                 add(p)
 
+    for p in _thredds_site_code_problems(globals_clean):
+        add(p)
     for p in _processing_level_problems(
         globals_clean.get("extra_global_attrs"), GLOBAL
     ):
@@ -835,6 +832,40 @@ def _global_qc_indicator_problems(global_attrs: dict) -> list[Problem]:
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=valid_options,
     )]
+
+def _thredds_site_code_problems(global_attrs: dict) -> list[Problem]:
+    if not isinstance(global_attrs, dict) or "site_code" not in global_attrs:
+        return []
+
+    site_code = global_attrs["site_code"]
+    if isinstance(site_code, bytes):
+        site_code = site_code.decode(errors="replace")
+    if isinstance(site_code, str):
+        site_code = site_code.strip()
+
+    # If it's empty, let Pydantic handle the "required field" error
+    if not site_code:
+        return []
+
+    thredds_sites = _get_thredds_site_codes()
+    link_text = "NDBC GDAC catalog"
+    
+    # Only throw the warning if we successfully loaded the catalog
+    if thredds_sites and site_code.upper() not in thredds_sites:
+        return [Problem(
+            scope=GLOBAL,
+            var_name=None,
+            field="site_code",
+            severity=WARNING,
+            message=(
+                f"'{site_code}' does not exist in the {link_text} (yet). "
+                "If this is not a brand new deployment, please check for typos."
+            ),
+            link_text=link_text,
+            link_url="https://dods.ndbc.noaa.gov/thredds/catalog/data/oceansites/DATA/catalog.html"
+        )]
+        
+    return []
     
 def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
     extra_attrs = var.get("extra_attrs")
@@ -1051,82 +1082,52 @@ def _seavox_collection_url(collection_id: str) -> str:
         f"{quote(collection_id, safe='')}/current/"
     )
 
-def _fetch_seavox_preferred_labels(collection_id: str) -> frozenset[str]:
-    url = (
-        f"{_seavox_collection_url(collection_id)}"
-        "?_profile=nvs&_mediatype=application/ld+json"
-    )
-    request = Request(
-        url,
-        headers={"Accept": "application/ld+json"},
-    )
-    with urlopen(request, timeout=_SEAVOX_REQUEST_TIMEOUT_SECONDS) as response:
-        vocabulary = json.loads(response.read())
+_SEAVOX_CACHE = {}
 
-    concepts = vocabulary.get("@graph") if isinstance(vocabulary, dict) else None
-    if not isinstance(concepts, list):
-        raise ValueError(
-            f"SeaVoX {collection_id} response does not contain a concept list"
-        )
+def _get_seavox_preferred_labels(collection_id: str) -> tuple[frozenset[str] | None, str | None]:
+    global _SEAVOX_CACHE
+    collection_id = collection_id.upper()
+    
+    # 1. Return instantly from RAM if we've already loaded it
+    if collection_id in _SEAVOX_CACHE:
+        return _SEAVOX_CACHE[collection_id], None
 
-    labels = set()
-    for concept in concepts:
-        if (
-            not isinstance(concept, dict)
-            or concept.get("@type") != "skos:Concept"
-            or concept.get("owl:deprecated") in (True, "true")
-        ):
-            continue
-        preferred_label = concept.get("skos:prefLabel")
-        if isinstance(preferred_label, dict):
-            if preferred_label.get("@language") != "en":
+    # 2. Read from the local JSON file
+    try:
+        current_dir = os.path.dirname(__file__)
+        json_path = os.path.join(current_dir, "..", "assets", f"seavox_{collection_id.upper()}.json")
+        
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        labels = set()
+        
+        # 3. Parse using your exact existing rules!
+        for concept in data.get("@graph", []):
+            if concept.get("owl:deprecated") in (True, "true", "True"):
                 continue
-            preferred_label = preferred_label.get("@value")
-        if isinstance(preferred_label, str) and preferred_label.strip():
-            labels.add(preferred_label.strip())
-
-    if not labels:
-        raise ValueError(
-            f"SeaVoX {collection_id} response contains no preferred labels"
-        )
-    return frozenset(labels)
-
-def _get_seavox_preferred_labels(
-    collection_id: str,
-) -> tuple[Optional[frozenset[str]], Optional[str]]:
-    with _seavox_cache_lock:
-        cache_entry = _seavox_vocabulary_cache.setdefault(
-            collection_id, _SeavoxVocabularyCacheEntry()
-        )
-        now = time.monotonic()
-        if cache_entry.preferred_labels and now < cache_entry.expires_at:
-            return cache_entry.preferred_labels, None
-        if now < cache_entry.retry_at:
-            if cache_entry.preferred_labels:
-                return cache_entry.preferred_labels, (
-                    f"SeaVoX {collection_id} could not be refreshed; "
-                    "using the cached vocabulary."
-                )
-            return None, f"SeaVoX {collection_id} is temporarily unavailable."
-
-        try:
-            labels = _fetch_seavox_preferred_labels(collection_id)
-        except (OSError, HTTPException, ValueError) as exc:
-            cache_entry.retry_at = now + _SEAVOX_RETRY_SECONDS
-            _seavox_logger.warning(
-                "Could not load the SeaVoX %s vocabulary: %s", collection_id, exc
-            )
-            if cache_entry.preferred_labels:
-                return cache_entry.preferred_labels, (
-                    f"SeaVoX {collection_id} could not be refreshed; "
-                    "using the cached vocabulary."
-                )
-            return None, f"SeaVoX {collection_id} is temporarily unavailable."
-
-        cache_entry.preferred_labels = labels
-        cache_entry.expires_at = now + _SEAVOX_CACHE_TTL_SECONDS
-        cache_entry.retry_at = 0.0
-        return labels, None
+                
+            preferred_label = concept.get("skos:prefLabel")
+            if isinstance(preferred_label, dict):
+                if preferred_label.get("@language") != "en":
+                    continue
+                preferred_label = preferred_label.get("@value")
+                
+            if isinstance(preferred_label, str) and preferred_label.strip():
+                labels.add(preferred_label.strip())
+        
+        if not labels:
+            return None, f"Local SeaVoX {collection_id} file contains no valid labels."
+            
+        # Freeze and cache it
+        frozen_labels = frozenset(labels)
+        _SEAVOX_CACHE[collection_id] = frozen_labels
+        return frozen_labels, None
+        
+    except FileNotFoundError:
+        return None, f"Local vocabulary file for {collection_id} is missing. Please run update_vocabularies.py."
+    except Exception as e:
+        return None, f"Error reading local {collection_id} file: {e}"
 
 def _seavox_vocabulary_value_problem(
     value: Any,
@@ -1214,36 +1215,67 @@ def _seavox_vocabulary_problems(
                 field_part="key",
             ))
     return problems
+
+_THREDDS_CACHE = None
+
+def _get_thredds_site_codes() -> set[str]:
+    global _THREDDS_CACHE
+    
+    if _THREDDS_CACHE is not None:
+        return _THREDDS_CACHE
+
+    try:
+        current_dir = os.path.dirname(__file__)
+        xml_path = os.path.join(current_dir, "..", "assets", "thredds_catalog.xml")
+        
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        sites = set()
+        # Iterate through all elements ignoring namespaces
+        for elem in root.iter():
+            if elem.tag.endswith('catalogRef') or elem.tag.endswith('dataset'):
+                # Grab anything that acts like a name or title
+                for attr_key, attr_val in elem.attrib.items():
+                    if attr_key.endswith('title') or attr_key == 'name':
+                        # Ignore the root catalog itself
+                        if attr_val not in ("DATA", "catalog.xml", "oceansites", ""):
+                            sites.add(attr_val.upper()) # Upper case for safe comparison
+                            
+        _THREDDS_CACHE = sites
+        return sites
+        
+    except Exception as e:
+        print(f"THREDDS LOCAL READ ERROR: {e}")
+        return set()
     
 _CF_CACHE = None
-_CF_CACHE_TIME = 0.0
 
 def _get_cf_standard_names() -> set[str]:
-    global _CF_CACHE, _CF_CACHE_TIME
-    now = time.monotonic()
+    global _CF_CACHE
     
     # Cache for 24 hours
-    if _CF_CACHE is not None and (now - _CF_CACHE_TIME < 86400):
+    if _CF_CACHE is not None:
         return _CF_CACHE
 
     try:
-        url = "https://cfconventions.org/Data/cf-standard-names/current/src/cf-standard-name-table.xml"
-        response = requests.get(url, timeout=5)
-        response.raise_for_status() # Raise an error if we get a 403/404
+        current_dir = os.path.dirname(__file__)
+        xml_path = os.path.join(current_dir, "..", "assets", "cf-standard-name-table.xml")
         
-        root = ET.fromstring(response.content)
+        # Parse the local XML file
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
         names = {
             child.attrib["id"] 
             for child in root 
             if child.tag.endswith(("entry", "alias")) and "id" in child.attrib
         }
         _CF_CACHE = names
-        _CF_CACHE_TIME = now
         return names
     except Exception as e:
         # Fails silently and falls back to whatever was cached
-        print(f"CF FETCH ERROR: {e}")
-        return _CF_CACHE or set()
+        print(f"CF LOCAL READ ERROR: {e}")
+        return set()
 
 def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
     """Validates standard_name, long_name, and Parameter code mappings for Data Variables."""
