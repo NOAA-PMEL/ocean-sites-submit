@@ -1444,10 +1444,21 @@ def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
         ))
         return problems
     
-    if units and standard_name and cf_names and standard_name in cf_names:
+    try:
+        file_u = Unit(units)
+    except ValueError:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units",
+            severity=WARNING, 
+            message=f"'{units}' is not a recognized UDUNITS-2 format."
+        ))
+        return problems
+        
+    if standard_name and cf_names and standard_name in cf_names:
         canonical = cf_names[standard_name]
         try:
-            file_u = Unit(units)
             can_u = Unit(canonical)
             
             if not file_u.is_convertible(can_u):
@@ -1459,13 +1470,7 @@ def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
                     message=f"Units '{units}' are not compatible with standard_name '{standard_name}'. Expected a unit convertible to '{canonical}'."
                 ))
         except ValueError:
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="units",
-                severity=WARNING,
-                message=f"'{units}' is not a recognized UDUNITS-2 format."
-            ))
+            pass
 
     return problems
         
