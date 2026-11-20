@@ -33,10 +33,12 @@ import json
 import os
 import re
 import math
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Any, Optional
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
+from cf_units import Unit
 from pydantic import ValidationError
 from ocean_sites.models import (
     NetcdfGlobalAttributes,
@@ -1280,13 +1282,14 @@ def _get_thredds_site_codes() -> set[str]:
     
 _CF_CACHE = None
 
-def _get_cf_standard_names() -> set[str]:
+def _get_cf_standard_names() -> dict:
     global _CF_CACHE
     
     # Cache for 24 hours
     if _CF_CACHE is not None:
         return _CF_CACHE
 
+    cf_dict = {}
     try:
         current_dir = os.path.dirname(__file__)
         xml_path = os.path.join(current_dir, "..", "assets", "cf-standard-name-table.xml")
@@ -1294,17 +1297,27 @@ def _get_cf_standard_names() -> set[str]:
         # Parse the local XML file
         tree = ET.parse(xml_path)
         root = tree.getroot()
-        names = {
-            child.attrib["id"] 
-            for child in root 
-            if child.tag.endswith(("entry", "alias")) and "id" in child.attrib
-        }
-        _CF_CACHE = names
-        return names
+
+        for entry in root.findall('entry'):
+            name = entry.get('id')
+            units = entry.findtext('canonical_units')
+            if name and units:
+                cf_dict[name] = units
+
+        for alias in root.findall('alias'):
+            alias_name = alias.get('id')
+            target_name = alias.findtext('entry_id')
+            # If the target exists in our dict, copy its units to the alias
+            if alias_name and target_name and target_name in cf_dict:
+                cf_dict[alias_name] = cf_dict[target_name]
+                
+        _CF_CACHE = cf_dict
+        return cf_dict
     except Exception as e:
         # Fails silently and falls back to whatever was cached
         print(f"CF LOCAL READ ERROR: {e}")
-        return set()
+        _CF_CACHE = {}
+        return _CF_CACHE
 
 def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
     """Validates standard_name, long_name, and Parameter code mappings for Data Variables."""
@@ -1409,6 +1422,49 @@ def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
                 field=field,
                 severity=WARNING,
                 message=f"Name '{active_name}' is normally associated with parameter code(s): {', '.join(expected_params)}."
+            ))
+
+    # Check for UDUNITS unit compatability
+    units = var.get("units") # Make sure to grab 'units' from your variable dictionary
+
+    if not units or not isinstance(units, str):
+        return problems
+    
+    if units.strip().lower() in ["psu", "pss-78"]:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units",
+            severity=ERROR,
+            message=(
+                f"'{units}' is not a valid CF/UDUNITS unit because salinity is a dimensionless ratio. "
+                "Per CF Conventions, for practical salinity, use '1' or '1e-3' instead."
+                "For absolute salinity, use 'g/kg' (or 'g kg-1')."
+            )
+        ))
+        return problems
+    
+    if units and standard_name and cf_names and standard_name in cf_names:
+        canonical = cf_names[standard_name]
+        try:
+            file_u = Unit(units)
+            can_u = Unit(canonical)
+            
+            if not file_u.is_convertible(can_u):
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="units",
+                    severity=WARNING,
+                    message=f"Units '{units}' are not compatible with standard_name '{standard_name}'. Expected a unit convertible to '{canonical}'."
+                ))
+        except ValueError:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="units",
+                severity=WARNING,
+                message=f"'{units}' is not a recognized UDUNITS-2 format."
             ))
 
     return problems
