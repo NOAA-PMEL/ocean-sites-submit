@@ -236,7 +236,7 @@ def _diff_variable_fields(original: dict, current: dict) -> dict:
     for field in FIXED_VARIABLE_FIELDS:
         orig_val = _normalize(original.get(field))
         curr_val = _normalize(current.get(field))
-        if orig_val != curr_val:
+        if not _is_equal(orig_val, curr_val):
             changed.append({"field": field, "original": orig_val, "current": curr_val})
 
     orig_extra = original.get("extra_attrs") or {}
@@ -253,7 +253,7 @@ def _diff_variable_fields(original: dict, current: dict) -> dict:
     for key in orig_extra.keys() & curr_extra.keys():
         orig_val = _normalize(orig_extra[key])
         curr_val = _normalize(curr_extra[key])
-        if orig_val != curr_val:
+        if not _is_equal(orig_val, curr_val):
             changed.append({
                 "field": f"extra_attrs.{key}",
                 "original": orig_val,
