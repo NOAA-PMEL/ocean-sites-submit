@@ -31,16 +31,10 @@ from __future__ import annotations
 
 import json
 import os
-import logging
 import math
-import threading
-import time
 from dataclasses import dataclass, asdict
-from http.client import HTTPException
 from typing import Any, Optional
 from urllib.parse import quote
-from urllib.request import Request, urlopen
-import requests
 import xml.etree.ElementTree as ET
 from pydantic import ValidationError
 from ocean_sites.models import (
@@ -147,15 +141,6 @@ _SEAVOX_ATTRIBUTE_VOCABULARIES = {
     ),
     VARIABLE: (),
 }
-
-
-@dataclass
-class _SeavoxVocabularyCacheEntry:
-    preferred_labels: Optional[frozenset[str]] = None
-    expires_at: float = 0.0
-    retry_at: float = 0.0
-    
-_seavox_vocabulary_cache: dict[str, _SeavoxVocabularyCacheEntry] = {}
 
 _QC_FLAG_VALUES = ("0", "1", "2", "3", "4", "7", "8", "9")
 _QC_FLAG_MEANINGS = (
@@ -1029,52 +1014,6 @@ def _processing_level_problems(
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=list(_PROCESSING_LEVEL_VALUES),
     )]
-
-def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
-    by_name = {str(var.get("name") or "").casefold(): var for var in variables}
-    problems = []
-
-    def dimension_names(value):
-        if isinstance(value, (list, tuple)):
-            return tuple(str(item) for item in value)
-        return tuple(str(value or "").split())
-
-    for var in variables:
-        var_type = var.get("var_type")
-        if var_type not in ("dm", "uncertainty"):
-            continue
-
-        name = str(var.get("name") or "")
-        suffix = "_DM" if var_type == "dm" else "_UNCERTAINTY"
-        parameter_name = name[:-len(suffix)] if name.upper().endswith(suffix) else ""
-        parameter = by_name.get(parameter_name.casefold())
-        if parameter is None or parameter.get("var_type") != "data":
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="dimensions",
-                message=f"A {var_type.upper()} variable must have a matching data variable.",
-            ))
-            continue
-
-        if dimension_names(var.get("dimensions")) != dimension_names(parameter.get("dimensions")):
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="dimensions",
-                message="Ancillary variable dimensions must match the paired data variable.",
-            ))
-        if (
-            var_type == "uncertainty"
-            and _blank_to_none(var.get("units")) != _blank_to_none(parameter.get("units"))
-        ):
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="units",
-                message="Uncertainty units must match the paired data variable.",
-            ))
-    return problems
 
 def _seavox_collection_url(collection_id: str) -> str:
     return (
