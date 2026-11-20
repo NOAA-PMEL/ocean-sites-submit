@@ -70,6 +70,13 @@ _SCHEMA_BY_VAR_TYPE = {
     "uncertainty": NetcdfUncertaintyVariableSchema
 }
 
+_ISO8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+_ISO8601_DURATION_RE = re.compile(
+    r"^P(?!T?$)(\d+Y)?(\d+M)?(\d+D)?(T(?!$)(\d+H)?(\d+M)?(\d+(?:\.\d+)?S)?)?$"
+)
+_EXTRA_ISO_UTC_FIELDS = {"date_modified", "date_issued"}
+_EXTRA_ISO_DURATION_FIELDS = {"time_coverage_duration", "time_coverage_resolution"}
+
 _OCEANSITES_PARAMETER_MAP = {
     "AIRT": "air_temperature",
     "CAPH": "air_pressure",
@@ -250,14 +257,10 @@ _VARIABLE_FIELDS = set(_VARIABLE_LABELS)
 _BOUND_PAIRS = (
     ("geospatial_lat_min", "geospatial_lat_max"),
     ("geospatial_lon_min", "geospatial_lon_max"),
-    ("geospatial_vertical_min", "geospatial_vertical_max")
+    ("geospatial_vertical_min", "geospatial_vertical_max"),
+    ("time_coverage_start", "time_coverage_end"),
 )
 
-# --------------------------------------------------------------
-# For spatial min/max problems that must be checked even when another field fails.
-# TODO: figure out times (right now are strs in DB, if want to include start/end time, need
-# to make this a datetime and fix downstream)
-# --------------------------------------------------------------
 def _singleton_spatial_bounds(current: dict) -> set:
     dimension_sizes = {
         dimension.get("name"): dimension.get("size")
@@ -306,17 +309,66 @@ def _cross_field_problems(
     allow_equal_bounds = allow_equal_bounds or set()
     for lo, hi in _BOUND_PAIRS:
         a, b = g.get(lo), g.get(hi)
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-            invalid_bounds = a >= b
-            if lo in allow_equal_bounds and a == b:
-                invalid_bounds = False
-            if not invalid_bounds:
+
+        if a is None or b is None or isinstance(a, bool) or isinstance(b, bool):
+            continue
+
+        if (
+            isinstance(a, str) and isinstance(b, str)
+            and _ISO8601_UTC_RE.match(a) and _ISO8601_UTC_RE.match(b)
+        ):
+            dt_a = datetime.fromisoformat(a.replace("Z", "+00:00"))
+            dt_b = datetime.fromisoformat(b.replace("Z", "+00:00"))
+            invalid_bounds = dt_a > dt_b
+            msg = f"End date must be on or after the start date"
+        else:
+            try:
+                a_num, b_num = float(a), float(b)
+            except (TypeError, ValueError):
                 continue
-            out.append(Problem(
-                scope=GLOBAL, field=hi,
-                message=f"Must be greater than the minimum ({a}).",
-                also_fields=(lo,),
+            invalid_bounds = a_num > b_num
+            if lo in allow_equal_bounds and a_num == b_num:
+                invalid_bounds = False
+            msg = f"Maximum must be greater than the minimum"
+
+        if not invalid_bounds:
+            continue
+        out.append(Problem(
+            scope=GLOBAL, field=hi,
+            message=msg,
+            also_fields=(lo,),
             ))
+    return out
+
+def _extra_datetime_problems(g: dict) -> list:
+    out = []
+    extra = g.get("extra_global_attrs") or {}
+    for key, raw_val in extra.items():
+        if raw_val is None or (isinstance(raw_val, str) and not raw_val.strip()):
+            continue
+
+        val = raw_val.strip() if isinstance(raw_val, str) else raw_val
+
+        if key in _EXTRA_ISO_UTC_FIELDS:
+            if not (isinstance(val, str) and _ISO8601_UTC_RE.match(val)):
+                out.append(Problem(
+                    scope=GLOBAL,
+                    field=key,
+                    message=(
+                        f"'{val}' is not a valid ISO 8601 UTC datetime. "
+                        "Expected format: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.fffffZ"
+                    ),
+                ))
+        elif key in _EXTRA_ISO_DURATION_FIELDS:
+            if not (isinstance(val, str) and _ISO8601_DURATION_RE.match(val)):
+                out.append(Problem(
+                    scope=GLOBAL,
+                    field=key,
+                    message=(
+                        f"'{val}' is not a valid {key}. "
+                        "Use ISO 8601 duration format (e.g. P1Y, P6M, PT12H, P1DT6H)."
+                    ),
+                ))
     return out
 
 # --------------------------------------------------------------
@@ -513,6 +565,9 @@ def validate_metadata(current: dict, original: dict = None) -> list:
 
     # Cross-field next-- these run whether or not the field checks pass
     for p in _cross_field_problems(globals_clean, allow_equal_bounds):
+        add(p)
+
+    for p in _extra_datetime_problems(globals_clean):
         add(p)
 
     try:

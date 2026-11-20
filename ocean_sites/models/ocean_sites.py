@@ -249,6 +249,15 @@ class NetcdfGlobalAttributesSchema(BaseModel):
             raise ValueError("geospatial_lon_min must be less than geospatial_lon_max")
         return self
 
+    @model_validator(mode="after")
+    def check_temporal_bounds(self):
+        # Both fields are already validated and parsed as UTC datetimes
+        if self.time_coverage_start > self.time_coverage_end:
+            raise ValueError(
+                "time_coverage_start must be earlier than or equal to time_coverage_end"
+            )
+        return self
+
 # ---- Dimensions -------
 
 class NetcdfDimension(Base):
