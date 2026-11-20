@@ -309,22 +309,26 @@ def _extra_attr_row_children(uid: str, key: str, value: str, var_uid: str, remov
             **strike
         },
     )
-    if var_uid is None:
-        key_input = html.Div(
-            style={'display': 'flex', 'flexDirection': 'column', 'flex': '1', 'minWidth': 0},
-            children=[
-                key_input,
-                html.Div(
-                    id={'type': 'nc-extra-attr-key-err', 'index': uid},
-                    className='nc-field-err',
-                    children=[],
-                ),
-            ],
-        )
+    key_err_id = (
+        {'type': 'nc-var-extra-attr-key-err', 'index': var_uid, 'attr_uid': uid}
+        if var_uid is not None else
+        {'type': 'nc-extra-attr-key-err', 'index': uid}
+    )
+    key_col = html.Div(
+        style={'display': 'flex', 'flexDirection': 'column', 'flex': '1', 'minWidth': 0},
+        children=[
+            key_input,
+            html.Div(
+                id=key_err_id,
+                className='nc-field-err',
+                children=[],
+            ),
+        ],
+    )
 
     return [
         dot,
-        key_input,
+        key_col,
         value_input,
         html.Span(
             className='nc-field-dot',

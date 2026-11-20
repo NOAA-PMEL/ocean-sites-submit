@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import math
 from dataclasses import dataclass, asdict
 from typing import Any, Optional
@@ -206,6 +207,8 @@ _SPATIAL_AXIS_MIN_FIELDS = {
     "Y": "geospatial_lat_min",
     "Z": "geospatial_vertical_min",
 }
+
+_FILL_ATTR_RE = re.compile(r"^_?(fill|missing)_?value$", re.IGNORECASE)
 
 _SENSOR_MOUNT_VALUES = (
     "mounted_on_fixed_structure",
@@ -585,6 +588,23 @@ def _validate_variable(var: dict) -> list:
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
+
+        #check to make sure coordinates DO NOT have fill values
+        extra_attrs = cleaned_var.get("extra_attrs") or {}
+        fill_keys = [k for k in extra_attrs if _FILL_ATTR_RE.match(k)]
+        if not fill_keys and _blank_to_none(cleaned_var.get("fill_value")) is not None:
+            fill_keys = ["_FillValue"]
+
+        problems.extend(
+            Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=key,
+                field_part="key",
+                message=f"Coordinate variables must not have a {key} attribute.",
+            )
+            for key in fill_keys
+        )
         
     if var_type != "coordinate":
         problems.extend(_sensor_attribute_problems(name, cleaned_var))
