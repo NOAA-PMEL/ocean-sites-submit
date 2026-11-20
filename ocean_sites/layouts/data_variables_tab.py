@@ -125,6 +125,7 @@ def _var_warn_pill_style():
         'color': '#f7b44f',
         'backgroundColor': 'rgba(247, 180, 79, .1)',
         'border': '1px solid rgba(247, 180, 79, .45)',
+        'marginLeft': '6px',
     }
 
 # ----------------------------------------------------------
@@ -182,12 +183,15 @@ def _var_card_body_children(uid: str, var_type: str, attributes: dict, extra_sto
         ]
 
     return [
+        html.Div(id={'type': 'nc-var-record-err', 'index': uid}, 
+            style={'marginTop': '-6px', 'marginBottom': 'px'},
+            children=[]
+        ),
         html.Div(
             style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr 1fr',
                    'gap': '12px', 'marginBottom': '16px'},
             children=attr_inputs
         ),
-        html.Div(id={'type': 'nc-var-record-err', 'index': uid}, children=[]),
         _section_label('Extra attributes'),
         html.Div(id={'type': 'nc-var-extra-container', 'index': uid}, children=extra_attr_children),
         html.Button(
@@ -258,8 +262,15 @@ def _imported_var_card(uid: str, name: str, var_type: str, dtype: str,
                                 children=[
                                     html.Span(name, style={'fontSize': '13px', 'fontWeight': '600',
                                                         'fontFamily': 'monospace', 'color': _TEXT_COLOR}),
-                                    html.Span(f'{dtype} ⋅ ({dimensions})',
-                                            style={'fontSize': '11px', 'color': '#666'}),
+                                    html.Span(
+                                        id={'type': 'nc-var-field-wrap', 'index': uid, 'field': 'dtype'},
+                                        className='nc-field-wrap',
+                                        style={'fontSize': '11px', 'color': '#666'},
+                                        children=[
+                                            html.Span(dtype, className='nc-var-dtype'),
+                                            f' ⋅ ({dimensions})',
+                                        ],
+                                    ),
                                     _var_type_badge(var_type),
                                 ]),
                         ]

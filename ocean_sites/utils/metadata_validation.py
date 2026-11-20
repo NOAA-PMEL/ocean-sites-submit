@@ -154,6 +154,7 @@ _QC_FLAG_MEANINGS = (
     "interpolated_value",
     "missing_value",
 )
+_VALID_QC_DTYPES = {"int8", "byte", "i1", "|i1"}
 
 _QC_INDICATOR_VALUES = (
     "unknown",
@@ -638,6 +639,20 @@ def _validate_variable(var: dict) -> list:
                     f"{' '.join(expected_meanings)}."
                 ),
                 also_fields=("flag_meanings",),
+            ))
+            
+    if var_type == "qc":
+        raw_dtype = _blank_to_none(cleaned_var.get("dtype"))
+        if raw_dtype is not None and str(raw_dtype).strip().lower() not in _VALID_QC_DTYPES:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dtype",
+                severity=WARNING,  # switch to "warning" if non-blocking
+                message=(
+                    f"QC variable '{name}' has data type '{raw_dtype}', "
+                    "but OceanSITES requires 'byte' (int8)."
+                ),
             ))
 
     if var_type == "dm":
