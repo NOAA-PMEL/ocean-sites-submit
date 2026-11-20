@@ -27,7 +27,7 @@ FIXED_GLOBAL_ATTR_FIELDS = (
 
 FIXED_VARIABLE_FIELDS = (
     "var_type", "dtype", "dimensions",
-    "standard_name", "units", "fill_value", "coordinates",
+    "standard_name", "long_name", "units", "fill_value", "coordinates",
     "axis", "flag_values", "flag_meanings"
 )
 
@@ -47,6 +47,21 @@ def _normalize(value):
     if isinstance(value, str):
         return value.strip()
     return value
+
+def _is_equal(orig_val, curr_val):
+    """Checks equality, falling back to float comparison for numeric mismatches 
+    (e.g. '10.0' vs 10)
+    """
+    if orig_val == curr_val:
+        return True
+    
+    if orig_val is not None and curr_val is not None:
+        try:
+            return float(orig_val) == float(curr_val)
+        except (ValueError, TypeError):
+            pass
+            
+    return False
     
 def _coerce_enum(value, enum_cls):
     """
@@ -144,7 +159,7 @@ def diff_global_attributes(original: dict, current: dict) -> dict:
     for field in FIXED_GLOBAL_ATTR_FIELDS:
         orig_val = _normalize(original.get(field))
         curr_val = _normalize(current.get(field))
-        if orig_val != curr_val:
+        if not _is_equal(orig_val, curr_val):
             changed.append({"field": field, "original": orig_val, "current": curr_val})
 
     orig_extra = original.get("extra_global_attrs") or {}
@@ -162,7 +177,7 @@ def diff_global_attributes(original: dict, current: dict) -> dict:
     for key in orig_extra.keys() & curr_extra.keys():
         orig_val = _normalize(orig_extra[key])
         curr_val = _normalize(curr_extra[key])
-        if orig_val != curr_val:
+        if not _is_equal(orig_val, curr_val):
             changed.append({
                 "field": f"extra_global_attrs.{key}",
                 "original": orig_val,
@@ -221,7 +236,7 @@ def _diff_variable_fields(original: dict, current: dict) -> dict:
     for field in FIXED_VARIABLE_FIELDS:
         orig_val = _normalize(original.get(field))
         curr_val = _normalize(current.get(field))
-        if orig_val != curr_val:
+        if not _is_equal(orig_val, curr_val):
             changed.append({"field": field, "original": orig_val, "current": curr_val})
 
     orig_extra = original.get("extra_attrs") or {}
@@ -238,7 +253,7 @@ def _diff_variable_fields(original: dict, current: dict) -> dict:
     for key in orig_extra.keys() & curr_extra.keys():
         orig_val = _normalize(orig_extra[key])
         curr_val = _normalize(curr_extra[key])
-        if orig_val != curr_val:
+        if not _is_equal(orig_val, curr_val):
             changed.append({
                 "field": f"extra_attrs.{key}",
                 "original": orig_val,

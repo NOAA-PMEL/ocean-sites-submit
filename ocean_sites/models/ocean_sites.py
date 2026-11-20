@@ -353,6 +353,9 @@ class NetcdfVariable(Base):
     standard_name: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, info={"label": "Standard Name"}
     )
+    long_name: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, info={"label": "Long Name"}
+    )
     units: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, info={"label": "Units"}
     )
@@ -422,7 +425,8 @@ class NetcdfCoordinateVariableSchema(NetcdfVariableBaseSchema):
 class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for data variables"""
     var_type: VarType = VarType.DATA
-    standard_name: str
+    standard_name: Optional[str] = None
+    long_name: Optional[str] = None
     units: str
     fill_value: str
     coordinates: str

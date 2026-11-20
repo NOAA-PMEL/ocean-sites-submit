@@ -30,15 +30,13 @@ Each problem is a plain dict (JSON-safe, so it round-trips through dcc.Store):
 from __future__ import annotations
 
 import json
-import logging
+import os
+import re
 import math
-import threading
-import time
 from dataclasses import dataclass, asdict
-from http.client import HTTPException
 from typing import Any, Optional
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
 from pydantic import ValidationError
 from ocean_sites.models import (
     NetcdfGlobalAttributes,
@@ -72,11 +70,49 @@ _SCHEMA_BY_VAR_TYPE = {
     "uncertainty": NetcdfUncertaintyVariableSchema
 }
 
-_SEAVOX_CACHE_TTL_SECONDS = 24 * 60 * 60
-_SEAVOX_RETRY_SECONDS = 15 * 60
-_SEAVOX_REQUEST_TIMEOUT_SECONDS = 2
-_seavox_logger = logging.getLogger(__name__)
-_seavox_cache_lock = threading.Lock()
+_OCEANSITES_PARAMETER_MAP = {
+    "AIRT": "air_temperature",
+    "CAPH": "air_pressure",
+    "CDIR": "direction_of_sea_water_velocity",
+    "CNDC": "sea_water_electrical_conductivity",
+    "CSPD": "sea_water_speed",
+    "DEPTH": "depth",
+    "DEWT": "dew_point_temperature",
+    "DOX2": "moles_of_oxygen_per_unit_mass_in_sea_water",
+    "DOXY": "mass_concentration_of_oxygen_in_sea_water",
+    "DOXY_TEMP": "temperature_of_sensor_for_oxygen_in_sea_water",
+    "DYNHT": "dynamic_height",
+    "FLU2": "fluorescence",
+    "HCSP": "sea_water_speed",
+    "HEAT": "heat_content",
+    "ISO17": "isotherm_depth",
+    "LW": "surface_downwelling_longwave_flux_in_air",
+    "OPBS": "optical_backscattering_coefficient",
+    "PCO2": "surface_partial_pressure_of_carbon_dioxide_in_air",
+    "PRES": "sea_water_pressure",
+    "PSAL": "sea_water_practical_salinity",
+    "RAIN": "rainfall_rate",
+    "RAIT": "thickness_of_rainfall_amount",
+    "RELH": "relative_humidity",
+    "SDFA": "surface_downwelling_shortwave_flux_in_air",
+    "SRAD": "isotropic_shortwave_radiance_in_air",
+    "SW": "surface_downwelling_shortwave_flux_in_air",
+    "TEMP": "sea_water_temperature",
+    "UCUR": "eastward_sea_water_velocity",
+    "UWND": "eastward_wind",
+    "VAVH": "sea_surface_wave_significant_height",
+    "VAVT": "sea_surface_wave_zero_upcrossing_period",
+    "VCUR": "northward_sea_water_velocity",
+    "VDEN": "sea_surface_wave_variance_spectral_density",
+    "VDIR": "sea_surface_wave_from_direction",
+    "VWND": "northward_wind",
+    "WDIR": "wind_to_direction",
+    "WSPD": "wind_speed"
+}
+
+_OCEANSITES_REVERSE_MAP = {}
+for param, cf_name in _OCEANSITES_PARAMETER_MAP.items():
+    _OCEANSITES_REVERSE_MAP.setdefault(cf_name, []).append(param)
 
 # Entries map field, collection, display name, optional nested dict, and advice.
 _SEAVOX_ATTRIBUTE_VOCABULARIES = {
@@ -106,15 +142,6 @@ _SEAVOX_ATTRIBUTE_VOCABULARIES = {
     ),
     VARIABLE: (),
 }
-
-
-@dataclass
-class _SeavoxVocabularyCacheEntry:
-    preferred_labels: Optional[frozenset[str]] = None
-    expires_at: float = 0.0
-    retry_at: float = 0.0
-    
-_seavox_vocabulary_cache: dict[str, _SeavoxVocabularyCacheEntry] = {}
 
 _QC_FLAG_VALUES = ("0", "1", "2", "3", "4", "7", "8", "9")
 _QC_FLAG_MEANINGS = (
@@ -180,6 +207,8 @@ _SPATIAL_AXIS_MIN_FIELDS = {
     "Y": "geospatial_lat_min",
     "Z": "geospatial_vertical_min",
 }
+
+_FILL_ATTR_RE = re.compile(r"^_?(fill|missing)_?value$", re.IGNORECASE)
 
 _SENSOR_MOUNT_VALUES = (
     "mounted_on_fixed_structure",
@@ -495,6 +524,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
             for p in _problems_from_error(err, GLOBAL, _GLOBAL_LABELS, _GLOBAL_FIELDS):
                 add(p)
 
+    for p in _thredds_site_code_problems(globals_clean):
+        add(p)
     for p in _processing_level_problems(
         globals_clean.get("extra_global_attrs"), GLOBAL
     ):
@@ -551,10 +582,29 @@ def _validate_variable(var: dict) -> list:
         )
         
     problems.extend(_seavox_vocabulary_problems(cleaned_var, VARIABLE, name))
+    problems.extend(_qc_indicator_problems(name, cleaned_var))
+    problems.extend(_dm_indicator_problems(name, cleaned_var))
+    problems.extend(_data_variable_name_problems(name, cleaned_var))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
-        problems.extend(_qc_indicator_problems(name, cleaned_var))
+
+        #check to make sure coordinates DO NOT have fill values
+        extra_attrs = cleaned_var.get("extra_attrs") or {}
+        fill_keys = [k for k in extra_attrs if _FILL_ATTR_RE.match(k)]
+        if not fill_keys and _blank_to_none(cleaned_var.get("fill_value")) is not None:
+            fill_keys = ["_FillValue"]
+
+        problems.extend(
+            Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=key,
+                field_part="key",
+                message=f"Coordinate variables must not have a {key} attribute.",
+            )
+            for key in fill_keys
+        )
         
     if var_type != "coordinate":
         problems.extend(_sensor_attribute_problems(name, cleaned_var))
@@ -787,6 +837,40 @@ def _global_qc_indicator_problems(global_attrs: dict) -> list[Problem]:
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=valid_options,
     )]
+
+def _thredds_site_code_problems(global_attrs: dict) -> list[Problem]:
+    if not isinstance(global_attrs, dict) or "site_code" not in global_attrs:
+        return []
+
+    site_code = global_attrs["site_code"]
+    if isinstance(site_code, bytes):
+        site_code = site_code.decode(errors="replace")
+    if isinstance(site_code, str):
+        site_code = site_code.strip()
+
+    # If it's empty, let Pydantic handle the "required field" error
+    if not site_code:
+        return []
+
+    thredds_sites = _get_thredds_site_codes()
+    link_text = "NDBC GDAC catalog"
+    
+    # Only throw the warning if we successfully loaded the catalog
+    if thredds_sites and site_code.upper() not in thredds_sites:
+        return [Problem(
+            scope=GLOBAL,
+            var_name=None,
+            field="site_code",
+            severity=WARNING,
+            message=(
+                f"'{site_code}' does not exist in the {link_text} (yet). "
+                "If this is not a brand new deployment, please check for typos."
+            ),
+            link_text=link_text,
+            link_url="https://dods.ndbc.noaa.gov/thredds/catalog/data/oceansites/DATA/catalog.html"
+        )]
+        
+    return []
     
 def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
     extra_attrs = var.get("extra_attrs")
@@ -813,6 +897,33 @@ def _qc_indicator_problems(name: str, var: dict) -> list[Problem]:
         ),
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=list(_QC_INDICATOR_VALUES),
+    )]
+
+def _dm_indicator_problems(name: str, var: dict) -> list[Problem]:
+    extra_attrs = var.get("extra_attrs")
+    if not isinstance(extra_attrs, dict) or "DM_indicator" not in extra_attrs:
+        return []
+
+    value = extra_attrs["DM_indicator"]
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+
+    if isinstance(value, str) and value in _DM_FLAG_VALUES:
+        return []
+
+    return [Problem(
+        scope=VARIABLE,
+        var_name=name,
+        field="DM_indicator",
+        severity=WARNING,
+        message=(
+            "DM_indicator should be one of: "
+            f"{', '.join(_DM_FLAG_VALUES)}."
+        ),
+        invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
+        valid_options=list(_DM_FLAG_VALUES),
     )]
 
 def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
@@ -924,134 +1035,58 @@ def _processing_level_problems(
         valid_options=list(_PROCESSING_LEVEL_VALUES),
     )]
 
-def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
-    by_name = {str(var.get("name") or "").casefold(): var for var in variables}
-    problems = []
-
-    def dimension_names(value):
-        if isinstance(value, (list, tuple)):
-            return tuple(str(item) for item in value)
-        return tuple(str(value or "").split())
-
-    for var in variables:
-        var_type = var.get("var_type")
-        if var_type not in ("dm", "uncertainty"):
-            continue
-
-        name = str(var.get("name") or "")
-        suffix = "_DM" if var_type == "dm" else "_UNCERTAINTY"
-        parameter_name = name[:-len(suffix)] if name.upper().endswith(suffix) else ""
-        parameter = by_name.get(parameter_name.casefold())
-        if parameter is None or parameter.get("var_type") != "data":
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="dimensions",
-                message=f"A {var_type.upper()} variable must have a matching data variable.",
-            ))
-            continue
-
-        if dimension_names(var.get("dimensions")) != dimension_names(parameter.get("dimensions")):
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="dimensions",
-                message="Ancillary variable dimensions must match the paired data variable.",
-            ))
-        if (
-            var_type == "uncertainty"
-            and _blank_to_none(var.get("units")) != _blank_to_none(parameter.get("units"))
-        ):
-            problems.append(Problem(
-                scope=VARIABLE,
-                var_name=name,
-                field="units",
-                message="Uncertainty units must match the paired data variable.",
-            ))
-    return problems
-
 def _seavox_collection_url(collection_id: str) -> str:
     return (
         "https://vocab.nerc.ac.uk/collection/"
         f"{quote(collection_id, safe='')}/current/"
     )
 
-def _fetch_seavox_preferred_labels(collection_id: str) -> frozenset[str]:
-    url = (
-        f"{_seavox_collection_url(collection_id)}"
-        "?_profile=nvs&_mediatype=application/ld+json"
-    )
-    request = Request(
-        url,
-        headers={"Accept": "application/ld+json"},
-    )
-    with urlopen(request, timeout=_SEAVOX_REQUEST_TIMEOUT_SECONDS) as response:
-        vocabulary = json.loads(response.read())
+_SEAVOX_CACHE = {}
 
-    concepts = vocabulary.get("@graph") if isinstance(vocabulary, dict) else None
-    if not isinstance(concepts, list):
-        raise ValueError(
-            f"SeaVoX {collection_id} response does not contain a concept list"
-        )
+def _get_seavox_preferred_labels(collection_id: str) -> tuple[frozenset[str] | None, str | None]:
+    global _SEAVOX_CACHE
+    collection_id = collection_id.upper()
+    
+    # 1. Return instantly from RAM if we've already loaded it
+    if collection_id in _SEAVOX_CACHE:
+        return _SEAVOX_CACHE[collection_id], None
 
-    labels = set()
-    for concept in concepts:
-        if (
-            not isinstance(concept, dict)
-            or concept.get("@type") != "skos:Concept"
-            or concept.get("owl:deprecated") in (True, "true")
-        ):
-            continue
-        preferred_label = concept.get("skos:prefLabel")
-        if isinstance(preferred_label, dict):
-            if preferred_label.get("@language") != "en":
+    # 2. Read from the local JSON file
+    try:
+        current_dir = os.path.dirname(__file__)
+        json_path = os.path.join(current_dir, "..", "assets", f"seavox_{collection_id.upper()}.json")
+        
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        labels = set()
+        
+        # 3. Parse using your exact existing rules!
+        for concept in data.get("@graph", []):
+            if concept.get("owl:deprecated") in (True, "true", "True"):
                 continue
-            preferred_label = preferred_label.get("@value")
-        if isinstance(preferred_label, str) and preferred_label.strip():
-            labels.add(preferred_label.strip())
-
-    if not labels:
-        raise ValueError(
-            f"SeaVoX {collection_id} response contains no preferred labels"
-        )
-    return frozenset(labels)
-
-def _get_seavox_preferred_labels(
-    collection_id: str,
-) -> tuple[Optional[frozenset[str]], Optional[str]]:
-    with _seavox_cache_lock:
-        cache_entry = _seavox_vocabulary_cache.setdefault(
-            collection_id, _SeavoxVocabularyCacheEntry()
-        )
-        now = time.monotonic()
-        if cache_entry.preferred_labels and now < cache_entry.expires_at:
-            return cache_entry.preferred_labels, None
-        if now < cache_entry.retry_at:
-            if cache_entry.preferred_labels:
-                return cache_entry.preferred_labels, (
-                    f"SeaVoX {collection_id} could not be refreshed; "
-                    "using the cached vocabulary."
-                )
-            return None, f"SeaVoX {collection_id} is temporarily unavailable."
-
-        try:
-            labels = _fetch_seavox_preferred_labels(collection_id)
-        except (OSError, HTTPException, ValueError) as exc:
-            cache_entry.retry_at = now + _SEAVOX_RETRY_SECONDS
-            _seavox_logger.warning(
-                "Could not load the SeaVoX %s vocabulary: %s", collection_id, exc
-            )
-            if cache_entry.preferred_labels:
-                return cache_entry.preferred_labels, (
-                    f"SeaVoX {collection_id} could not be refreshed; "
-                    "using the cached vocabulary."
-                )
-            return None, f"SeaVoX {collection_id} is temporarily unavailable."
-
-        cache_entry.preferred_labels = labels
-        cache_entry.expires_at = now + _SEAVOX_CACHE_TTL_SECONDS
-        cache_entry.retry_at = 0.0
-        return labels, None
+                
+            preferred_label = concept.get("skos:prefLabel")
+            if isinstance(preferred_label, dict):
+                if preferred_label.get("@language") != "en":
+                    continue
+                preferred_label = preferred_label.get("@value")
+                
+            if isinstance(preferred_label, str) and preferred_label.strip():
+                labels.add(preferred_label.strip())
+        
+        if not labels:
+            return None, f"Local SeaVoX {collection_id} file contains no valid labels."
+            
+        # Freeze and cache it
+        frozen_labels = frozenset(labels)
+        _SEAVOX_CACHE[collection_id] = frozen_labels
+        return frozen_labels, None
+        
+    except FileNotFoundError:
+        return None, f"Local vocabulary file for {collection_id} is missing. Please run update_vocabularies.py."
+    except Exception as e:
+        return None, f"Error reading local {collection_id} file: {e}"
 
 def _seavox_vocabulary_value_problem(
     value: Any,
@@ -1061,6 +1096,9 @@ def _seavox_vocabulary_value_problem(
     scope: str,
     var_name: Optional[str] = None,
 ) -> list[Problem]:
+
+    recommendation = None
+
     if isinstance(value, bytes):
         value = value.decode(errors="replace")
     if isinstance(value, str):
@@ -1136,7 +1174,175 @@ def _seavox_vocabulary_problems(
                 field_part="key",
             ))
     return problems
+
+_THREDDS_CACHE = None
+
+def _get_thredds_site_codes() -> set[str]:
+    global _THREDDS_CACHE
     
+    if _THREDDS_CACHE is not None:
+        return _THREDDS_CACHE
+
+    try:
+        current_dir = os.path.dirname(__file__)
+        xml_path = os.path.join(current_dir, "..", "assets", "thredds_catalog.xml")
+        
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        sites = set()
+        # Iterate through all elements ignoring namespaces
+        for elem in root.iter():
+            if elem.tag.endswith('catalogRef') or elem.tag.endswith('dataset'):
+                # Grab anything that acts like a name or title
+                for attr_key, attr_val in elem.attrib.items():
+                    if attr_key.endswith('title') or attr_key == 'name':
+                        # Ignore the root catalog itself
+                        if attr_val not in ("DATA", "catalog.xml", "oceansites", ""):
+                            sites.add(attr_val.upper()) # Upper case for safe comparison
+                            
+        _THREDDS_CACHE = sites
+        return sites
+        
+    except Exception as e:
+        print(f"THREDDS LOCAL READ ERROR: {e}")
+        return set()
+    
+_CF_CACHE = None
+
+def _get_cf_standard_names() -> set[str]:
+    global _CF_CACHE
+    
+    # Cache for 24 hours
+    if _CF_CACHE is not None:
+        return _CF_CACHE
+
+    try:
+        current_dir = os.path.dirname(__file__)
+        xml_path = os.path.join(current_dir, "..", "assets", "cf-standard-name-table.xml")
+        
+        # Parse the local XML file
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        names = {
+            child.attrib["id"] 
+            for child in root 
+            if child.tag.endswith(("entry", "alias")) and "id" in child.attrib
+        }
+        _CF_CACHE = names
+        return names
+    except Exception as e:
+        # Fails silently and falls back to whatever was cached
+        print(f"CF LOCAL READ ERROR: {e}")
+        return set()
+
+def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
+    """Validates standard_name, long_name, and Parameter code mappings for Data Variables."""
+    if var.get("var_type") != "data":
+        return []
+
+    problems = []
+    
+    standard_name = var.get("standard_name")
+    if isinstance(standard_name, str): standard_name = standard_name.strip() or None
+    
+    long_name = var.get("long_name")
+    if isinstance(long_name, str): long_name = long_name.strip() or None
+
+    if not standard_name and not long_name:
+        # Paint the standard_name box red
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="standard_name",
+            severity=ERROR,
+            message="Either standard_name or long_name must be provided."
+        ))
+
+    # Note: Pydantic already enforces that at least ONE is present, so we just check validity.
+    active_name = None
+    cf_names = _get_cf_standard_names()
+
+    cf_link_text = "CF Standard Name Table"
+    cf_link_url = "https://cfconventions.org/Data/cf-standard-names/current/build/cf-standard-name-table.html"
+
+    # 1. Verify CF Standard Name legitimacy
+    if not cf_names:
+        # THE NETWORK CHECK: If the list is empty, warn the user instead of failing silently!
+        problems.append(Problem(
+            scope=VARIABLE, 
+            var_name=name, 
+            field="standard_name" if standard_name else "long_name", 
+            severity=WARNING,
+            message=f"Could not reach the server to validate this name against the {cf_link_text}. Network connection failed.",
+            link_text=cf_link_text,
+            link_url=cf_link_url
+        ))
+        active_name = standard_name or long_name
+    else:
+        if standard_name:
+            if cf_names and standard_name not in cf_names:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="standard_name",
+                    severity=ERROR,
+                    message=(
+                        f"'{standard_name}' is not in the official {cf_link_text}. "
+                        "If this is a non-standard parameter, please clear this field and use "
+                        "the 'Long Name' attribute instead."
+                    ),
+                    link_text=cf_link_text,
+                    link_url=cf_link_url
+                ))
+                active_name = long_name or standard_name  # fallback for the mapping checks
+            else:
+                active_name = standard_name
+        else:
+            if long_name and cf_names and long_name in cf_names:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="long_name",
+                    severity=ERROR,
+                    message=(
+                        f"'{long_name}' is a valid CF standard name. "
+                        "We recommend moving it to the 'Standard name' field."
+                    )
+                ))
+            active_name = long_name
+
+    # 2. Cross-reference checks against the OceanSITES manual
+    param_code = str(name).strip().upper()
+    
+    # Check if the parameter code matches the expected long_name / standard_name
+    expected_active = _OCEANSITES_PARAMETER_MAP.get(param_code)
+    if expected_active and active_name and active_name != expected_active:
+        field = "standard_name" if standard_name else "long_name"
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field=field,
+            severity=WARNING,
+            message=f"Parameter '{param_code}' typically uses the name '{expected_active}'.",
+            valid_options=[expected_active]
+        ))
+
+    # Check if the provided name expects a different parameter code
+    if active_name in _OCEANSITES_REVERSE_MAP:
+        expected_params = _OCEANSITES_REVERSE_MAP[active_name]
+        if param_code not in expected_params:
+            field = "standard_name" if standard_name else "long_name"
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=field,
+                severity=WARNING,
+                message=f"Name '{active_name}' is normally associated with parameter code(s): {', '.join(expected_params)}."
+            ))
+
+    return problems
+        
 def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
     variable_names = {
         var.get("name")

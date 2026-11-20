@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog xmlns="http://www.unidata.ucar.edu/namespaces/thredds/InvCatalog/v1.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.2">
+  <service name="allServices" serviceType="Compound" base="">
+    <service name="ncdods" serviceType="OpenDAP" base="/thredds/dodsC/" />
+    <service name="HTTPServer" serviceType="HTTPServer" base="/thredds/fileServer/" />
+    <service name="ncml" serviceType="NCML" base="/thredds/ncml/" />
+    <service name="uddc" serviceType="UDDC" base="/thredds/uddc/" />
+    <service name="iso" serviceType="ISO" base="/thredds/iso/" />
+  </service>
+  <dataset name="oceansites/DATA/">
+    <property name="DatasetScan" value="true" />
+    <metadata inherited="true">
+      <serviceName>allServices</serviceName>
+    </metadata>
+    <catalogRef xlink:href="ALOHA/catalog.xml" xlink:title="ALOHA" ID="data/oceansites/DATA/ALOHA" name="ALOHA">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="ANTARES/catalog.xml" xlink:title="ANTARES" ID="data/oceansites/DATA/ANTARES" name="ANTARES">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="BATS/catalog.xml" xlink:title="BATS" ID="data/oceansites/DATA/BATS" name="BATS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="CCE1/catalog.xml" xlink:title="CCE1" ID="data/oceansites/DATA/CCE1" name="CCE1">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="CCE2/catalog.xml" xlink:title="CCE2" ID="data/oceansites/DATA/CCE2" name="CCE2">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="CIS/catalog.xml" xlink:title="CIS" ID="data/oceansites/DATA/CIS" name="CIS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="CORC-GIZO/catalog.xml" xlink:title="CORC-GIZO" ID="data/oceansites/DATA/CORC-GIZO" name="CORC-GIZO">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="CORC-MISIMA/catalog.xml" xlink:title="CORC-MISIMA" ID="data/oceansites/DATA/CORC-MISIMA" name="CORC-MISIMA">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="DYFAMED/catalog.xml" xlink:title="DYFAMED" ID="data/oceansites/DATA/DYFAMED" name="DYFAMED">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="E1M3A/catalog.xml" xlink:title="E1M3A" ID="data/oceansites/DATA/E1M3A" name="E1M3A">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="E2M3A/catalog.xml" xlink:title="E2M3A" ID="data/oceansites/DATA/E2M3A" name="E2M3A">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="EC1/catalog.xml" xlink:title="EC1" ID="data/oceansites/DATA/EC1" name="EC1">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="ESTOC/catalog.xml" xlink:title="ESTOC" ID="data/oceansites/DATA/ESTOC" name="ESTOC">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="FRAM/catalog.xml" xlink:title="FRAM" ID="data/oceansites/DATA/FRAM" name="FRAM">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="I-ORS/catalog.xml" xlink:title="I-ORS" ID="data/oceansites/DATA/I-ORS" name="I-ORS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="IMOS-EAC/catalog.xml" xlink:title="IMOS-EAC" ID="data/oceansites/DATA/IMOS-EAC" name="IMOS-EAC">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="IMOS-ITF/catalog.xml" xlink:title="IMOS-ITF" ID="data/oceansites/DATA/IMOS-ITF" name="IMOS-ITF">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="JKEO/catalog.xml" xlink:title="JKEO" ID="data/oceansites/DATA/JKEO" name="JKEO">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="K276/catalog.xml" xlink:title="K276" ID="data/oceansites/DATA/K276" name="K276">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="KEO/catalog.xml" xlink:title="KEO" ID="data/oceansites/DATA/KEO" name="KEO">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="LACAZE/catalog.xml" xlink:title="LACAZE" ID="data/oceansites/DATA/LACAZE" name="LACAZE">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="LINE-W/catalog.xml" xlink:title="LINE-W" ID="data/oceansites/DATA/LINE-W" name="LINE-W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="LION/catalog.xml" xlink:title="LION" ID="data/oceansites/DATA/LION" name="LION">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="LOCO-IRMINGSEA/catalog.xml" xlink:title="LOCO-IRMINGSEA" ID="data/oceansites/DATA/LOCO-IRMINGSEA" name="LOCO-IRMINGSEA">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="LOCO-MOZCHANNEL/catalog.xml" xlink:title="LOCO-MOZCHANNEL" ID="data/oceansites/DATA/LOCO-MOZCHANNEL" name="LOCO-MOZCHANNEL">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MAK/catalog.xml" xlink:title="MAK" ID="data/oceansites/DATA/MAK" name="MAK">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MBARI/catalog.xml" xlink:title="MBARI" ID="data/oceansites/DATA/MBARI" name="MBARI">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE1/catalog.xml" xlink:title="MOVE1" ID="data/oceansites/DATA/MOVE1" name="MOVE1">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE2/catalog.xml" xlink:title="MOVE2" ID="data/oceansites/DATA/MOVE2" name="MOVE2">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE3/catalog.xml" xlink:title="MOVE3" ID="data/oceansites/DATA/MOVE3" name="MOVE3">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE4/catalog.xml" xlink:title="MOVE4" ID="data/oceansites/DATA/MOVE4" name="MOVE4">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE5/catalog.xml" xlink:title="MOVE5" ID="data/oceansites/DATA/MOVE5" name="MOVE5">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE6/catalog.xml" xlink:title="MOVE6" ID="data/oceansites/DATA/MOVE6" name="MOVE6">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="MOVE7/catalog.xml" xlink:title="MOVE7" ID="data/oceansites/DATA/MOVE7" name="MOVE7">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="NACLIM/catalog.xml" xlink:title="NACLIM" ID="data/oceansites/DATA/NACLIM" name="NACLIM">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="NOG/catalog.xml" xlink:title="NOG" ID="data/oceansites/DATA/NOG" name="NOG">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="NTAS/catalog.xml" xlink:title="NTAS" ID="data/oceansites/DATA/NTAS" name="NTAS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="P12N23W/catalog.xml" xlink:title="P12N23W" ID="data/oceansites/DATA/P12N23W" name="P12N23W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="PAP/catalog.xml" xlink:title="PAP" ID="data/oceansites/DATA/PAP" name="PAP">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="PAPA/catalog.xml" xlink:title="PAPA" ID="data/oceansites/DATA/PAPA" name="PAPA">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="PLANIER/catalog.xml" xlink:title="PLANIER" ID="data/oceansites/DATA/PLANIER" name="PLANIER">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="PYLOS/catalog.xml" xlink:title="PYLOS" ID="data/oceansites/DATA/PYLOS" name="PYLOS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="S-ORS/catalog.xml" xlink:title="S-ORS" ID="data/oceansites/DATA/S-ORS" name="S-ORS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="SATS/catalog.xml" xlink:title="SATS" ID="data/oceansites/DATA/SATS" name="SATS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="SOG/catalog.xml" xlink:title="SOG" ID="data/oceansites/DATA/SOG" name="SOG">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="SOTS/catalog.xml" xlink:title="SOTS" ID="data/oceansites/DATA/SOTS" name="SOTS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="STATION-M/catalog.xml" xlink:title="STATION-M" ID="data/oceansites/DATA/STATION-M" name="STATION-M">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="Stratus/catalog.xml" xlink:title="Stratus" ID="data/oceansites/DATA/Stratus" name="Stratus">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N110W/catalog.xml" xlink:title="T0N110W" ID="data/oceansites/DATA/T0N110W" name="T0N110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N125W/catalog.xml" xlink:title="T0N125W" ID="data/oceansites/DATA/T0N125W" name="T0N125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N140W/catalog.xml" xlink:title="T0N140W" ID="data/oceansites/DATA/T0N140W" name="T0N140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N155W/catalog.xml" xlink:title="T0N155W" ID="data/oceansites/DATA/T0N155W" name="T0N155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N165E/catalog.xml" xlink:title="T0N165E" ID="data/oceansites/DATA/T0N165E" name="T0N165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N170W/catalog.xml" xlink:title="T0N170W" ID="data/oceansites/DATA/T0N170W" name="T0N170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N180W/catalog.xml" xlink:title="T0N180W" ID="data/oceansites/DATA/T0N180W" name="T0N180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T0N95W/catalog.xml" xlink:title="T0N95W" ID="data/oceansites/DATA/T0N95W" name="T0N95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T10N110W/catalog.xml" xlink:title="T10N110W" ID="data/oceansites/DATA/T10N110W" name="T10N110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T10N165E/catalog.xml" xlink:title="T10N165E" ID="data/oceansites/DATA/T10N165E" name="T10N165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T10N170W/catalog.xml" xlink:title="T10N170W" ID="data/oceansites/DATA/T10N170W" name="T10N170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T1N140W/catalog.xml" xlink:title="T1N140W" ID="data/oceansites/DATA/T1N140W" name="T1N140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T1S140W/catalog.xml" xlink:title="T1S140W" ID="data/oceansites/DATA/T1S140W" name="T1S140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N110W/catalog.xml" xlink:title="T2N110W" ID="data/oceansites/DATA/T2N110W" name="T2N110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N125W/catalog.xml" xlink:title="T2N125W" ID="data/oceansites/DATA/T2N125W" name="T2N125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N140W/catalog.xml" xlink:title="T2N140W" ID="data/oceansites/DATA/T2N140W" name="T2N140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N155W/catalog.xml" xlink:title="T2N155W" ID="data/oceansites/DATA/T2N155W" name="T2N155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N165E/catalog.xml" xlink:title="T2N165E" ID="data/oceansites/DATA/T2N165E" name="T2N165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N170W/catalog.xml" xlink:title="T2N170W" ID="data/oceansites/DATA/T2N170W" name="T2N170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N180W/catalog.xml" xlink:title="T2N180W" ID="data/oceansites/DATA/T2N180W" name="T2N180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2N95W/catalog.xml" xlink:title="T2N95W" ID="data/oceansites/DATA/T2N95W" name="T2N95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S110W/catalog.xml" xlink:title="T2S110W" ID="data/oceansites/DATA/T2S110W" name="T2S110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S125W/catalog.xml" xlink:title="T2S125W" ID="data/oceansites/DATA/T2S125W" name="T2S125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S140W/catalog.xml" xlink:title="T2S140W" ID="data/oceansites/DATA/T2S140W" name="T2S140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S155W/catalog.xml" xlink:title="T2S155W" ID="data/oceansites/DATA/T2S155W" name="T2S155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S165E/catalog.xml" xlink:title="T2S165E" ID="data/oceansites/DATA/T2S165E" name="T2S165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S170W/catalog.xml" xlink:title="T2S170W" ID="data/oceansites/DATA/T2S170W" name="T2S170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S180W/catalog.xml" xlink:title="T2S180W" ID="data/oceansites/DATA/T2S180W" name="T2S180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T2S95W/catalog.xml" xlink:title="T2S95W" ID="data/oceansites/DATA/T2S95W" name="T2S95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N110W/catalog.xml" xlink:title="T5N110W" ID="data/oceansites/DATA/T5N110W" name="T5N110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N125W/catalog.xml" xlink:title="T5N125W" ID="data/oceansites/DATA/T5N125W" name="T5N125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N140W/catalog.xml" xlink:title="T5N140W" ID="data/oceansites/DATA/T5N140W" name="T5N140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N155W/catalog.xml" xlink:title="T5N155W" ID="data/oceansites/DATA/T5N155W" name="T5N155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N165E/catalog.xml" xlink:title="T5N165E" ID="data/oceansites/DATA/T5N165E" name="T5N165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N170W/catalog.xml" xlink:title="T5N170W" ID="data/oceansites/DATA/T5N170W" name="T5N170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N180W/catalog.xml" xlink:title="T5N180W" ID="data/oceansites/DATA/T5N180W" name="T5N180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5N95W/catalog.xml" xlink:title="T5N95W" ID="data/oceansites/DATA/T5N95W" name="T5N95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S110W/catalog.xml" xlink:title="T5S110W" ID="data/oceansites/DATA/T5S110W" name="T5S110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S125W/catalog.xml" xlink:title="T5S125W" ID="data/oceansites/DATA/T5S125W" name="T5S125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S140W/catalog.xml" xlink:title="T5S140W" ID="data/oceansites/DATA/T5S140W" name="T5S140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S155W/catalog.xml" xlink:title="T5S155W" ID="data/oceansites/DATA/T5S155W" name="T5S155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S165E/catalog.xml" xlink:title="T5S165E" ID="data/oceansites/DATA/T5S165E" name="T5S165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S170W/catalog.xml" xlink:title="T5S170W" ID="data/oceansites/DATA/T5S170W" name="T5S170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S180W/catalog.xml" xlink:title="T5S180W" ID="data/oceansites/DATA/T5S180W" name="T5S180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T5S95W/catalog.xml" xlink:title="T5S95W" ID="data/oceansites/DATA/T5S95W" name="T5S95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N110W/catalog.xml" xlink:title="T8N110W" ID="data/oceansites/DATA/T8N110W" name="T8N110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N125W/catalog.xml" xlink:title="T8N125W" ID="data/oceansites/DATA/T8N125W" name="T8N125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N155W/catalog.xml" xlink:title="T8N155W" ID="data/oceansites/DATA/T8N155W" name="T8N155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N165E/catalog.xml" xlink:title="T8N165E" ID="data/oceansites/DATA/T8N165E" name="T8N165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N170W/catalog.xml" xlink:title="T8N170W" ID="data/oceansites/DATA/T8N170W" name="T8N170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N180W/catalog.xml" xlink:title="T8N180W" ID="data/oceansites/DATA/T8N180W" name="T8N180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8N95W/catalog.xml" xlink:title="T8N95W" ID="data/oceansites/DATA/T8N95W" name="T8N95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S110W/catalog.xml" xlink:title="T8S110W" ID="data/oceansites/DATA/T8S110W" name="T8S110W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S125W/catalog.xml" xlink:title="T8S125W" ID="data/oceansites/DATA/T8S125W" name="T8S125W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S155W/catalog.xml" xlink:title="T8S155W" ID="data/oceansites/DATA/T8S155W" name="T8S155W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S165E/catalog.xml" xlink:title="T8S165E" ID="data/oceansites/DATA/T8S165E" name="T8S165E">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S170W/catalog.xml" xlink:title="T8S170W" ID="data/oceansites/DATA/T8S170W" name="T8S170W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S180W/catalog.xml" xlink:title="T8S180W" ID="data/oceansites/DATA/T8S180W" name="T8S180W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T8S95W/catalog.xml" xlink:title="T8S95W" ID="data/oceansites/DATA/T8S95W" name="T8S95W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="T9N140W/catalog.xml" xlink:title="T9N140W" ID="data/oceansites/DATA/T9N140W" name="T9N140W">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="TENATSO/catalog.xml" xlink:title="TENATSO" ID="data/oceansites/DATA/TENATSO" name="TENATSO">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="W1M3A/catalog.xml" xlink:title="W1M3A" ID="data/oceansites/DATA/W1M3A" name="W1M3A">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="WDW/catalog.xml" xlink:title="WDW" ID="data/oceansites/DATA/WDW" name="WDW">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+    <catalogRef xlink:href="WHOTS/catalog.xml" xlink:title="WHOTS" ID="data/oceansites/DATA/WHOTS" name="WHOTS">
+      <property name="DatasetScan" value="true" />
+    </catalogRef>
+  </dataset>
+</catalog>

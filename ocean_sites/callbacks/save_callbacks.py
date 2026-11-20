@@ -118,6 +118,9 @@ def register_callbacks(app):
                 dims = var.get('dimensions')
                 if isinstance(dims, (list, tuple)):
                     var['dimensions'] = " ".join(dims)
+
+                if isinstance(var.get('extra_attrs'), dict) and 'long_name' in var['extra_attrs']:
+                    var['long_name'] = var['extra_attrs'].pop('long_name')
         
         except Exception as e:
             return no_update, no_update, html.Div(
@@ -225,6 +228,8 @@ def register_callbacks(app):
         State('nc-vars-store', 'data'),
         State({'type': 'nc-var-standard-name', 'index': ALL}, 'id'), # VARIABLES START. Can map each id back to the variable
         State({'type': 'nc-var-standard-name', 'index': ALL}, 'value'),
+        State({'type': 'nc-var-long-name', 'index': ALL}, 'id'),   
+        State({'type': 'nc-var-long-name', 'index': ALL}, 'value'),
         State({'type': 'nc-var-units', 'index': ALL}, 'id'),
         State({'type': 'nc-var-units', 'index': ALL}, 'value'),
         State({'type': 'nc-var-fill-value', 'index': ALL}, 'id'),
@@ -258,6 +263,7 @@ def register_callbacks(app):
         extra_attr_key_ids, extra_attr_key_values,
         extra_attr_value_ids, extra_attr_value_values, edited_parsed_data,
         vars_store, standard_name_ids, standard_name_values,
+        long_name_ids, long_name_values,
         units_ids, units_values, fill_value_ids, fill_value_values,
         coordinate_ids, coordinate_values, axis_ids, axis_values,
         flag_values_ids, flag_values_values, 
@@ -290,6 +296,7 @@ def register_callbacks(app):
 
         variables = build_variables_list(
             vars_store=vars_store, standard_name_ids=standard_name_ids, standard_name_values=standard_name_values, 
+            long_name_ids=long_name_ids, long_name_values=long_name_values,
             units_ids=units_ids, units_values=units_values, fill_value_ids=fill_value_ids, fill_value_values=fill_value_values, 
             coordinate_ids=coordinate_ids, coordinate_values=coordinate_values, axis_ids=axis_ids, axis_values=axis_values,
             flag_values_ids=flag_values_ids, flag_values_values=flag_values_values,
@@ -382,6 +389,7 @@ def register_callbacks(app):
 
         Input('nc-vars-store', 'data'),
         Input({'type': 'nc-var-standard-name', 'index': ALL}, 'value'),
+        Input({'type': 'nc-var-long-name', 'index': ALL}, 'value'),
         Input({'type': 'nc-var-units', 'index': ALL}, 'value'),
         Input({'type': 'nc-var-fill-value', 'index': ALL}, 'value'),
         Input({'type': 'nc-var-coordinates', 'index': ALL}, 'value'),
@@ -397,6 +405,7 @@ def register_callbacks(app):
         State({'type': 'nc-extra-attr-key', 'index': ALL}, 'id'),
         State({'type': 'nc-extra-attr-value', 'index': ALL}, 'id'),
         State({'type': 'nc-var-standard-name', 'index': ALL}, 'id'),
+        State({'type': 'nc-var-long-name', 'index': ALL}, 'id'),
         State({'type': 'nc-var-units', 'index': ALL}, 'id'),
         State({'type': 'nc-var-fill-value', 'index': ALL}, 'id'),
         State({'type': 'nc-var-coordinates', 'index': ALL}, 'id'),
@@ -415,13 +424,13 @@ def register_callbacks(app):
         update_interval, date_created, lat_min, lat_max, lon_min, lon_max,
         vertical_min, vertical_max, time_start, time_end, 
         extra_attr_key_values, extra_attr_value_values,
-        vars_store, standard_name_values, units_values, fill_values_values,
+        vars_store, standard_name_values, long_name_values, units_values, fill_values_values,
         coordinate_values, axis_values, flag_values_values, flag_meanings_values,
         var_extra_attr_key_values, var_extra_attr_value_values,
         extra_attrs_store,
         var_extra_store_data2,
         extra_attr_key_ids, extra_attr_value_ids,
-        standard_name_ids, units_ids, fill_value_ids, coordinate_ids, axis_ids,
+        standard_name_ids, long_name_ids, units_ids, fill_value_ids, coordinate_ids, axis_ids,
         flag_values_ids, flag_meanings_ids,
         var_extra_attr_key_ids, var_extra_attr_value_ids, current_edited_data,
         var_extra_store_ids2
@@ -456,6 +465,7 @@ def register_callbacks(app):
 
         variables = build_variables_list(
             vars_store=vars_store, standard_name_ids=standard_name_ids, standard_name_values=standard_name_values, 
+            long_name_ids=long_name_ids, long_name_values=long_name_values,
             units_ids=units_ids, units_values=units_values, fill_value_ids=fill_value_ids, fill_value_values=fill_values_values, 
             coordinate_ids=coordinate_ids, coordinate_values=coordinate_values, axis_ids=axis_ids, axis_values=axis_values,
             flag_values_ids=flag_values_ids, flag_values_values=flag_values_values,

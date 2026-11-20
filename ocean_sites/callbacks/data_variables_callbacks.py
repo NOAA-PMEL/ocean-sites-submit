@@ -555,6 +555,8 @@ def register_callbacks(app):
         Output({'type': 'nc-var-record-err', 'index': ALL}, 'children'),
         Output({'type': 'nc-var-extra-attr-err', 'index': ALL, 'attr_uid': ALL}, 'children'),
         Output({'type': 'nc-var-extra-attr-value', 'index': ALL, 'attr_uid': ALL}, 'className'),
+        Output({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'className'),
+        Output({'type': 'nc-var-extra-attr-key-err', 'index': ALL, 'attr_uid': ALL}, 'children'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
@@ -576,6 +578,8 @@ def register_callbacks(app):
         record_ids = [m['id'] for m in ctx.outputs_list[2]]
         extra_attr_err_ids = [m['id'] for m in ctx.outputs_list[3]]
         extra_attr_value_ids = [m['id'] for m in ctx.outputs_list[4]]
+        extra_attr_key_out_ids = [m['id'] for m in ctx.outputs_list[5]]
+        extra_attr_key_err_ids = [m['id'] for m in ctx.outputs_list[6]]
         extra_attr_keys = {
             (id_['index'], id_['attr_uid']): (value or '').strip()
             for id_, value in zip(extra_attr_key_ids or [], extra_attr_key_values or [])
@@ -625,12 +629,13 @@ def register_callbacks(app):
             var_name = name_by_uid.get(id_['index'])
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
             problem = by_name.get(var_name, {}).get(field)
+            is_value_problem = problem and problem.get('field_part') != 'key'
             extra_attr_errors.append(
                 _err_text(
                     problem['message'], problem['severity'],
                     problem.get('link_text'), problem.get('link_url')
                 )
-                if problem else []
+                if is_value_problem else []
             )
 
         extra_attr_value_classes = []
@@ -638,12 +643,38 @@ def register_callbacks(app):
             var_name = name_by_uid.get(id_['index'])
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
             problem = by_name.get(var_name, {}).get(field)
+            is_value_problem = problem and problem.get('field_part') != 'key'
             extra_attr_value_classes.append(
                 f"nc-var-extra-attr-value is-{problem['severity']}"
-                if problem else 'nc-var-extra-attr-value'
+                if is_value_problem else 'nc-var-extra-attr-value'
             )
 
-        return children, classes, record_errors, extra_attr_errors, extra_attr_value_classes
+        extra_attr_key_classes = []
+        for id_ in extra_attr_key_out_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
+            problem = by_name.get(var_name, {}).get(field)
+            is_key_problem = problem and problem.get('field_part') == 'key'
+            extra_attr_key_classes.append(
+                f"nc-var-extra-attr-key is-{problem['severity']}"
+                if is_key_problem else 'nc-var-extra-attr-key'
+            )
+
+        extra_attr_key_errors = []
+        for id_ in extra_attr_key_err_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
+            problem = by_name.get(var_name, {}).get(field)
+            is_key_problem = problem and problem.get('field_part') == 'key'
+            extra_attr_key_errors.append(
+                _err_text(
+                    problem['message'], problem['severity'],
+                    problem.get('link_text'), problem.get('link_url')
+                )
+                if is_key_problem else []
+            )
+
+        return children, classes, record_errors, extra_attr_errors, extra_attr_value_classes, extra_attr_key_classes, extra_attr_key_errors
 
 
 
