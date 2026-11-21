@@ -569,6 +569,7 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for p in _cross_field_problems(globals_clean, allow_equal_bounds):
         add(p)
 
+    #Check whether datetime fields are in ISO 8601 format
     for p in _extra_datetime_problems(globals_clean):
         add(p)
 
@@ -604,6 +605,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for p in _ancillary_variable_problems(variables):
         add(p)
     for p in _ancillary_reference_problems(variables):
+        add(p)
+    for p in _coordinate_attribute_problems(variables):
         add(p)
 
     return [asdict(p) for p in problems]
@@ -876,6 +879,80 @@ def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
             ),
             valid_options=list(_VERTICAL_REFERENCES),
         ))
+
+    return problems
+
+def _coordinate_attribute_problems(variables: list) -> list[Problem]:
+    """Validates OceanSITES coordinate requirements and cross-references."""
+    problems = []
+    core_axes = {"T", "Z", "Y", "X"}
+    
+    # 1. Pre-compute axes ONCE for the entire file. 
+    # Creates a fast lookup: {"TIME": "T", "LATITUDE": "Y", "TEMP": ""}
+    var_to_axis = {}
+    for v in variables:
+        if v.get("name"):
+            # Try top-level first, fallback to nested 'attributes' if your parser groups them
+            axis_val = v.get("axis") or v.get("attributes", {}).get("axis", "")
+            var_to_axis[v["name"]] = str(axis_val).strip().upper()
+
+    for var in variables:
+        name = var.get("name", "(unnamed)")
+        
+        if var.get("var_type") != "data":
+            continue
+            
+        dims = var.get("dimensions") or []
+        # CRITICAL FIX: If dimensions is a single string, split it into a list!
+        if isinstance(dims, str):
+            dims = dims.strip().split()
+            
+        coords_str = var.get("coordinates")
+        
+        # 2. Instant Axis Check
+        found_axes = {var_to_axis.get(d) for d in dims} & core_axes
+        
+        if not core_axes.issubset(found_axes) and not coords_str:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="coordinates",
+                severity=ERROR,
+                message="Data variables must be mapped to all 4 spatiotemporal axes (T, Z, Y, X). Provide a 'coordinates' attribute."
+            ))
+            continue
+            
+        # 3. String Parsing & Checks
+        if isinstance(coords_str, str):
+            c_list = coords_str.strip().split()
+            
+            # Existence check: if it's not a key in var_to_axis, it doesn't exist in the file!
+            missing = [c for c in c_list if c not in var_to_axis]
+            if missing:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="coordinates",
+                    severity=ERROR,
+                    message=f"Coordinate variable(s) not found in file: {', '.join(missing)}"
+                ))
+                
+            # 4. Order Check (T, Z, Y, X) using the pre-computed map
+            axis_map = {var_to_axis.get(c): c for c in c_list}
+            
+            if core_axes.issubset(axis_map.keys()):
+                expected_str = f"{axis_map['T']} {axis_map['Z']} {axis_map['Y']} {axis_map['X']}"
+                actual_core = " ".join([c for c in c_list if c in expected_str])
+                
+                if actual_core != expected_str:
+                    problems.append(Problem(
+                        scope=VARIABLE,
+                        var_name=name,
+                        field="coordinates",
+                        severity=WARNING, 
+                        message=f"OceanSITES prefers the coordinates order (T, Z, Y, X). Expected '{expected_str}'.",
+                        valid_options=[expected_str] 
+                    ))
 
     return problems
 

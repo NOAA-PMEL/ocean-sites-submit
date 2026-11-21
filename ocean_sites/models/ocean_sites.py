@@ -438,7 +438,7 @@ class NetcdfDataVariableSchema(NetcdfVariableBaseSchema):
     long_name: Optional[str] = None
     units: str
     fill_value: str
-    coordinates: str
+    coordinates: Optional[str] = None
 
 class NetcdfQCVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for QC variables"""
