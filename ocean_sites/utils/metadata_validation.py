@@ -33,10 +33,12 @@ import json
 import os
 import re
 import math
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Any, Optional
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
+from cf_units import Unit
 from pydantic import ValidationError
 from ocean_sites.models import (
     NetcdfGlobalAttributes,
@@ -69,6 +71,13 @@ _SCHEMA_BY_VAR_TYPE = {
     "dm": NetcdfDMVariableSchema,
     "uncertainty": NetcdfUncertaintyVariableSchema
 }
+
+_ISO8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+_ISO8601_DURATION_RE = re.compile(
+    r"^P(?!T?$)(\d+Y)?(\d+M)?(\d+D)?(T(?!$)(\d+H)?(\d+M)?(\d+(?:\.\d+)?S)?)?$"
+)
+_EXTRA_ISO_UTC_FIELDS = {"date_modified", "date_issued"}
+_EXTRA_ISO_DURATION_FIELDS = {"time_coverage_duration", "time_coverage_resolution"}
 
 _OCEANSITES_PARAMETER_MAP = {
     "AIRT": "air_temperature",
@@ -154,6 +163,7 @@ _QC_FLAG_MEANINGS = (
     "interpolated_value",
     "missing_value",
 )
+_VALID_QC_DTYPES = {"int8", "byte", "i1", "|i1"}
 
 _QC_INDICATOR_VALUES = (
     "unknown",
@@ -249,14 +259,10 @@ _VARIABLE_FIELDS = set(_VARIABLE_LABELS)
 _BOUND_PAIRS = (
     ("geospatial_lat_min", "geospatial_lat_max"),
     ("geospatial_lon_min", "geospatial_lon_max"),
-    ("geospatial_vertical_min", "geospatial_vertical_max")
+    ("geospatial_vertical_min", "geospatial_vertical_max"),
+    ("time_coverage_start", "time_coverage_end"),
 )
 
-# --------------------------------------------------------------
-# For spatial min/max problems that must be checked even when another field fails.
-# TODO: figure out times (right now are strs in DB, if want to include start/end time, need
-# to make this a datetime and fix downstream)
-# --------------------------------------------------------------
 def _singleton_spatial_bounds(current: dict) -> set:
     dimension_sizes = {
         dimension.get("name"): dimension.get("size")
@@ -305,17 +311,66 @@ def _cross_field_problems(
     allow_equal_bounds = allow_equal_bounds or set()
     for lo, hi in _BOUND_PAIRS:
         a, b = g.get(lo), g.get(hi)
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-            invalid_bounds = a >= b
-            if lo in allow_equal_bounds and a == b:
-                invalid_bounds = False
-            if not invalid_bounds:
+
+        if a is None or b is None or isinstance(a, bool) or isinstance(b, bool):
+            continue
+
+        if (
+            isinstance(a, str) and isinstance(b, str)
+            and _ISO8601_UTC_RE.match(a) and _ISO8601_UTC_RE.match(b)
+        ):
+            dt_a = datetime.fromisoformat(a.replace("Z", "+00:00"))
+            dt_b = datetime.fromisoformat(b.replace("Z", "+00:00"))
+            invalid_bounds = dt_a > dt_b
+            msg = f"End date must be on or after the start date"
+        else:
+            try:
+                a_num, b_num = float(a), float(b)
+            except (TypeError, ValueError):
                 continue
-            out.append(Problem(
-                scope=GLOBAL, field=hi,
-                message=f"Must be greater than the minimum ({a}).",
-                also_fields=(lo,),
+            invalid_bounds = a_num > b_num
+            if lo in allow_equal_bounds and a_num == b_num:
+                invalid_bounds = False
+            msg = f"Maximum must be greater than the minimum"
+
+        if not invalid_bounds:
+            continue
+        out.append(Problem(
+            scope=GLOBAL, field=hi,
+            message=msg,
+            also_fields=(lo,),
             ))
+    return out
+
+def _extra_datetime_problems(g: dict) -> list:
+    out = []
+    extra = g.get("extra_global_attrs") or {}
+    for key, raw_val in extra.items():
+        if raw_val is None or (isinstance(raw_val, str) and not raw_val.strip()):
+            continue
+
+        val = raw_val.strip() if isinstance(raw_val, str) else raw_val
+
+        if key in _EXTRA_ISO_UTC_FIELDS:
+            if not (isinstance(val, str) and _ISO8601_UTC_RE.match(val)):
+                out.append(Problem(
+                    scope=GLOBAL,
+                    field=key,
+                    message=(
+                        f"'{val}' is not a valid ISO 8601 UTC datetime. "
+                        "Expected format: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.fffffZ"
+                    ),
+                ))
+        elif key in _EXTRA_ISO_DURATION_FIELDS:
+            if not (isinstance(val, str) and _ISO8601_DURATION_RE.match(val)):
+                out.append(Problem(
+                    scope=GLOBAL,
+                    field=key,
+                    message=(
+                        f"'{val}' is not a valid {key}. "
+                        "Use ISO 8601 duration format (e.g. P1Y, P6M, PT12H, P1DT6H)."
+                    ),
+                ))
     return out
 
 # --------------------------------------------------------------
@@ -514,6 +569,10 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for p in _cross_field_problems(globals_clean, allow_equal_bounds):
         add(p)
 
+    #Check whether datetime fields are in ISO 8601 format
+    for p in _extra_datetime_problems(globals_clean):
+        add(p)
+
     try:
         NetcdfGlobalAttributesSchema.model_validate(
             globals_clean,
@@ -546,6 +605,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for p in _ancillary_variable_problems(variables):
         add(p)
     for p in _ancillary_reference_problems(variables):
+        add(p)
+    for p in _coordinate_attribute_problems(variables):
         add(p)
 
     return [asdict(p) for p in problems]
@@ -638,6 +699,20 @@ def _validate_variable(var: dict) -> list:
                     f"{' '.join(expected_meanings)}."
                 ),
                 also_fields=("flag_meanings",),
+            ))
+            
+    if var_type == "qc":
+        raw_dtype = _blank_to_none(cleaned_var.get("dtype"))
+        if raw_dtype is not None and str(raw_dtype).strip().lower() not in _VALID_QC_DTYPES:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dtype",
+                severity=WARNING,  # switch to "warning" if non-blocking
+                message=(
+                    f"QC variable '{name}' has data type '{raw_dtype}', "
+                    "but OceanSITES requires 'byte' (int8)."
+                ),
             ))
 
     if var_type == "dm":
@@ -804,6 +879,80 @@ def _coordinate_axis_problems(name: str, var: dict) -> list[Problem]:
             ),
             valid_options=list(_VERTICAL_REFERENCES),
         ))
+
+    return problems
+
+def _coordinate_attribute_problems(variables: list) -> list[Problem]:
+    """Validates OceanSITES coordinate requirements and cross-references."""
+    problems = []
+    core_axes = {"T", "Z", "Y", "X"}
+    
+    # 1. Pre-compute axes ONCE for the entire file. 
+    # Creates a fast lookup: {"TIME": "T", "LATITUDE": "Y", "TEMP": ""}
+    var_to_axis = {}
+    for v in variables:
+        if v.get("name"):
+            # Try top-level first, fallback to nested 'attributes' if your parser groups them
+            axis_val = v.get("axis") or v.get("attributes", {}).get("axis", "")
+            var_to_axis[v["name"]] = str(axis_val).strip().upper()
+
+    for var in variables:
+        name = var.get("name", "(unnamed)")
+        
+        if var.get("var_type") != "data":
+            continue
+            
+        dims = var.get("dimensions") or []
+        # CRITICAL FIX: If dimensions is a single string, split it into a list!
+        if isinstance(dims, str):
+            dims = dims.strip().split()
+            
+        coords_str = var.get("coordinates")
+        
+        # 2. Instant Axis Check
+        found_axes = {var_to_axis.get(d) for d in dims} & core_axes
+        
+        if not core_axes.issubset(found_axes) and not coords_str:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="coordinates",
+                severity=ERROR,
+                message="Data variables must be mapped to all 4 spatiotemporal axes (T, Z, Y, X). Provide a 'coordinates' attribute."
+            ))
+            continue
+            
+        # 3. String Parsing & Checks
+        if isinstance(coords_str, str):
+            c_list = coords_str.strip().split()
+            
+            # Existence check: if it's not a key in var_to_axis, it doesn't exist in the file!
+            missing = [c for c in c_list if c not in var_to_axis]
+            if missing:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="coordinates",
+                    severity=ERROR,
+                    message=f"Coordinate variable(s) not found in file: {', '.join(missing)}"
+                ))
+                
+            # 4. Order Check (T, Z, Y, X) using the pre-computed map
+            axis_map = {var_to_axis.get(c): c for c in c_list}
+            
+            if core_axes.issubset(axis_map.keys()):
+                expected_str = f"{axis_map['T']} {axis_map['Z']} {axis_map['Y']} {axis_map['X']}"
+                actual_core = " ".join([c for c in c_list if c in expected_str])
+                
+                if actual_core != expected_str:
+                    problems.append(Problem(
+                        scope=VARIABLE,
+                        var_name=name,
+                        field="coordinates",
+                        severity=WARNING, 
+                        message=f"OceanSITES prefers the coordinates order (T, Z, Y, X). Expected '{expected_str}'.",
+                        valid_options=[expected_str] 
+                    ))
 
     return problems
 
@@ -1210,13 +1359,14 @@ def _get_thredds_site_codes() -> set[str]:
     
 _CF_CACHE = None
 
-def _get_cf_standard_names() -> set[str]:
+def _get_cf_standard_names() -> dict:
     global _CF_CACHE
     
     # Cache for 24 hours
     if _CF_CACHE is not None:
         return _CF_CACHE
 
+    cf_dict = {}
     try:
         current_dir = os.path.dirname(__file__)
         xml_path = os.path.join(current_dir, "..", "assets", "cf-standard-name-table.xml")
@@ -1224,17 +1374,27 @@ def _get_cf_standard_names() -> set[str]:
         # Parse the local XML file
         tree = ET.parse(xml_path)
         root = tree.getroot()
-        names = {
-            child.attrib["id"] 
-            for child in root 
-            if child.tag.endswith(("entry", "alias")) and "id" in child.attrib
-        }
-        _CF_CACHE = names
-        return names
+
+        for entry in root.findall('entry'):
+            name = entry.get('id')
+            units = entry.findtext('canonical_units')
+            if name and units:
+                cf_dict[name] = units
+
+        for alias in root.findall('alias'):
+            alias_name = alias.get('id')
+            target_name = alias.findtext('entry_id')
+            # If the target exists in our dict, copy its units to the alias
+            if alias_name and target_name and target_name in cf_dict:
+                cf_dict[alias_name] = cf_dict[target_name]
+                
+        _CF_CACHE = cf_dict
+        return cf_dict
     except Exception as e:
         # Fails silently and falls back to whatever was cached
         print(f"CF LOCAL READ ERROR: {e}")
-        return set()
+        _CF_CACHE = {}
+        return _CF_CACHE
 
 def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
     """Validates standard_name, long_name, and Parameter code mappings for Data Variables."""
@@ -1340,6 +1500,54 @@ def _data_variable_name_problems(name: str, var: dict) -> list[Problem]:
                 severity=WARNING,
                 message=f"Name '{active_name}' is normally associated with parameter code(s): {', '.join(expected_params)}."
             ))
+
+    # Check for UDUNITS unit compatability
+    units = var.get("units") # Make sure to grab 'units' from your variable dictionary
+
+    if not units or not isinstance(units, str):
+        return problems
+    
+    if units.strip().lower() in ["psu", "pss-78"]:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units",
+            severity=ERROR,
+            message=(
+                f"'{units}' is not a valid CF/UDUNITS unit because salinity is a dimensionless ratio. "
+                "Per CF Conventions, for practical salinity, use '1' or '1e-3' instead."
+                "For absolute salinity, use 'g/kg' (or 'g kg-1')."
+            )
+        ))
+        return problems
+    
+    try:
+        file_u = Unit(units)
+    except ValueError:
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units",
+            severity=WARNING, 
+            message=f"'{units}' is not a recognized UDUNITS-2 format."
+        ))
+        return problems
+        
+    if standard_name and cf_names and standard_name in cf_names:
+        canonical = cf_names[standard_name]
+        try:
+            can_u = Unit(canonical)
+            
+            if not file_u.is_convertible(can_u):
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field="units",
+                    severity=WARNING,
+                    message=f"Units '{units}' are not compatible with standard_name '{standard_name}'. Expected a unit convertible to '{canonical}'."
+                ))
+        except ValueError:
+            pass
 
     return problems
         
