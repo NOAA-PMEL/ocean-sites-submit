@@ -1245,7 +1245,7 @@ def _numeric_attr_problems(var: dict) -> list[Problem]:
                     field=other_name,
                     severity=ERROR,
                     message=f"'{other_name}' ({other_raw}) must equal '{ref_name}' ({ref_raw}).",
-                    also_fields=[ref_name],
+                #    also_fields=[ref_name],
                 ))
 
     # 4. Check valid_min < valid_max
