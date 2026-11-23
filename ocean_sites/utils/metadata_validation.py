@@ -33,6 +33,7 @@ import json
 import os
 import re
 import math
+import numpy as np
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Any, Optional
@@ -646,6 +647,7 @@ def _validate_variable(var: dict) -> list:
     problems.extend(_qc_indicator_problems(name, cleaned_var))
     problems.extend(_dm_indicator_problems(name, cleaned_var))
     problems.extend(_data_variable_name_problems(name, cleaned_var))
+    problems.extend(_numeric_attr_problems(cleaned_var))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
@@ -1112,6 +1114,156 @@ def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
 
     return problems
 
+def _parse_numeric(val):
+    """Return a float/int if val is numeric (or a numeric string), else None."""
+    if isinstance(val, bool) or val is None:
+        return None
+    if isinstance(val, (int, float, np.number)):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except ValueError:
+            try:
+                return float(s)
+            except ValueError:
+                return None
+    return None
+
+def _numeric_attr_problems(var: dict) -> list[Problem]:
+    """
+    Validate that fill/missing value attributes, valid_min, and valid_max:
+      1. Are numeric and compatible with the parent variable's dtype.
+      2. All fill/missing attributes (e.g., _FillValue and missing_value) agree in value.
+    """
+    problems: list[Problem] = []
+    name = var.get("name") or "(unnamed)"
+    raw_dtype = var.get("dtype")
+
+    try:
+        dt = np.dtype(raw_dtype) if raw_dtype else None
+    except TypeError:
+        dt = None
+
+    if dt is None or not (np.issubdtype(dt, np.integer) or np.issubdtype(dt, np.floating)):
+        return problems
+
+    extra = var.get("extra_attrs") or {}
+
+    # 1. Collect all numeric attributes to check (top-level + extra_attrs)
+    attrs_to_check: dict[str, object] = {}
+
+    if var.get("fill_value") is not None:
+        attrs_to_check["fill_value"] = var["fill_value"]
+    for k in ("valid_min", "valid_max"):
+        if var.get(k) is not None:
+            attrs_to_check[k] = var[k]
+        elif k in extra:
+            attrs_to_check[k] = extra[k]
+
+    # Pick up any _FillValue / missing_value variants from extra_attrs via _FILL_ATTR_RE
+    for k, v in extra.items():
+        if _FILL_ATTR_RE.match(k):
+            attrs_to_check[k] = v
+
+    parsed_fill_values: dict[str, int | float] = {}
+    parsed_attrs: dict[str, int | float] = {}
+
+    # 2. Validate numeric parsing and dtype compatibility
+    for attr_name, raw_val in attrs_to_check.items():
+        if raw_val is None or (isinstance(raw_val, str) and not raw_val.strip()):
+            continue
+
+        num = _parse_numeric(raw_val)
+        if num is None:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=attr_name,
+                severity=ERROR,
+                message=f"'{attr_name}' must be a numeric value matching {dt.name}, not '{raw_val}'.",
+                invalid_value=str(raw_val),
+            ))
+            continue
+
+        if np.issubdtype(dt, np.integer):
+            info = np.iinfo(dt)
+            if isinstance(num, float) and not num.is_integer():
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=attr_name,
+                    severity=ERROR,
+                    message=f"'{attr_name}' ({raw_val}) cannot have a fractional value for integer type {dt.name}.",
+                    invalid_value=str(raw_val),
+                ))
+                continue
+            if not (info.min <= num <= info.max):
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=attr_name,
+                    severity=ERROR,
+                    message=f"'{attr_name}' ({raw_val}) is out of range for {dt.name} ({info.min} to {info.max}).",
+                    invalid_value=str(raw_val),
+                ))
+                continue
+
+        elif np.issubdtype(dt, np.floating):
+            info = np.finfo(dt)
+            if math.isfinite(num) and not (info.min <= num <= info.max):
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=attr_name,
+                    severity=ERROR,
+                    message=f"'{attr_name}' ({raw_val}) overflows {dt.name} range.",
+                    invalid_value=str(raw_val),
+                ))
+                continue
+
+        parsed_attrs[attr_name] = num
+        if _FILL_ATTR_RE.match(attr_name):
+            parsed_fill_values[attr_name] = num
+
+    # 3. If multiple fill/missing attributes exist, verify they are all equal
+    if len(parsed_fill_values) > 1:
+        items = list(parsed_fill_values.items())
+        ref_name, ref_raw = items[0]
+        ref_val = dt.type(ref_raw)
+
+        for other_name, other_raw in items[1:]:
+            other_val = dt.type(other_raw)
+            both_nan = math.isnan(ref_val) and math.isnan(other_val)
+            if not both_nan and ref_val != other_val:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=other_name,
+                    severity=ERROR,
+                    message=f"'{other_name}' ({other_raw}) must equal '{ref_name}' ({ref_raw}).",
+                    also_fields=[ref_name],
+                ))
+
+    # 4. Check valid_min < valid_max
+    if "valid_min" in parsed_attrs and "valid_max" in parsed_attrs:
+        vmin = dt.type(parsed_attrs["valid_min"])
+        vmax = dt.type(parsed_attrs["valid_max"])
+        if not (math.isnan(vmin) or math.isnan(vmax)) and vmin >= vmax:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="valid_min",
+                severity=ERROR,
+                message=f"'valid_min' ({parsed_attrs['valid_min']}) must be less than 'valid_max' ({parsed_attrs['valid_max']}).",
+                #also_fields=["valid_max"],
+            ))
+
+    return problems
+    
 def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
     by_name = {str(var.get("name") or "").casefold(): var for var in variables}
     problems = []
