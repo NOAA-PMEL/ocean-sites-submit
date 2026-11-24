@@ -590,22 +590,21 @@ def register_callbacks(app):
         }
 
         def _lookup(id_):
-            return by_name.get(name_by_uid.get(id_['index']), {}).get(id_['field'])
+            return by_name.get(name_by_uid.get(id_['index']), {}).get(id_['field'], [])
 
         children = []
         for id_ in err_ids:
-            p = _lookup(id_)
-            children.append(
-                _err_text(
-                    p['message'], p['severity'], p.get('link_text'), p.get('link_url')
-                )
-                if p and p['field'] == id_['field'] else []
-            )
+            probs = _lookup(id_)
+            children.append([
+                _err_text(p['message'], p['severity'], p.get('link_text'), p.get('link_url'))
+                for p in probs
+                if p['field'] == id_['field']
+            ])
 
         classes = []
         for id_ in wrap_ids:
-            p = _lookup(id_)
-            classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
+            probs = _lookup(id_)
+            classes.append(f"nc-field-wrap is-{probs[0]['severity']}" if probs else 'nc-field-wrap')
 
         visible_fields = {
             'standard_name', 'long_name', 'units', 'fill_value', 'coordinates', 'axis',
@@ -624,10 +623,11 @@ def register_callbacks(app):
                     problem['message'], problem['severity'],
                     problem.get('link_text'), problem.get('link_url')
                 )
-                for field, problem in field_problems.items()
+                for field, probs in field_problems.items()
                 if field not in visible_fields
                 and field not in extra_fields
                 and field not in _EXTRA_SECTION_FIELDS
+                for problem in probs
             ])
 
         extra_section_errors = []
@@ -643,59 +643,60 @@ def register_callbacks(app):
                     problem['message'], problem['severity'],
                     problem.get('link_text'), problem.get('link_url')
                 )
-                for field, problem in field_problems.items()
+                for field, probs in field_problems.items()
                 if field in _EXTRA_SECTION_FIELDS and field not in extra_fields
+                for problem in probs
             ])
 
         extra_attr_errors = []
         for id_ in extra_attr_err_ids:
             var_name = name_by_uid.get(id_['index'])
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
-            problem = by_name.get(var_name, {}).get(field)
-            is_value_problem = problem and problem.get('field_part') != 'key'
-            extra_attr_errors.append(
+            probs = by_name.get(var_name, {}).get(field, [])
+            value_problems = [p for p in probs if p.get('field_part') != 'key']
+            extra_attr_errors.append([
                 _err_text(
                     problem['message'], problem['severity'],
                     problem.get('link_text'), problem.get('link_url')
                 )
-                if is_value_problem else []
-            )
+                for problem in value_problems
+            ])
 
         extra_attr_value_classes = []
         for id_ in extra_attr_value_ids:
             var_name = name_by_uid.get(id_['index'])
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
-            problem = by_name.get(var_name, {}).get(field)
-            is_value_problem = problem and problem.get('field_part') != 'key'
+            probs = by_name.get(var_name, {}).get(field, [])
+            value_problems = [p for p in probs if p.get('field_part') != 'key']
             extra_attr_value_classes.append(
-                f"nc-var-extra-attr-value is-{problem['severity']}"
-                if is_value_problem else 'nc-var-extra-attr-value'
+                f"nc-var-extra-attr-value is-{value_problems[0]['severity']}"
+                if value_problems else 'nc-var-extra-attr-value'
             )
 
         extra_attr_key_classes = []
         for id_ in extra_attr_key_out_ids:
             var_name = name_by_uid.get(id_['index'])
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
-            problem = by_name.get(var_name, {}).get(field)
-            is_key_problem = problem and problem.get('field_part') == 'key'
+            probs = by_name.get(var_name, {}).get(field, [])
+            key_problems = [p for p in probs if p.get('field_part') == 'key']
             extra_attr_key_classes.append(
-                f"nc-var-extra-attr-key is-{problem['severity']}"
-                if is_key_problem else 'nc-var-extra-attr-key'
+                f"nc-var-extra-attr-key is-{key_problems[0]['severity']}"
+                if key_problems else 'nc-var-extra-attr-key'
             )
 
         extra_attr_key_errors = []
         for id_ in extra_attr_key_err_ids:
             var_name = name_by_uid.get(id_['index'])
             field = extra_attr_keys.get((id_['index'], id_['attr_uid']))
-            problem = by_name.get(var_name, {}).get(field)
-            is_key_problem = problem and problem.get('field_part') == 'key'
-            extra_attr_key_errors.append(
+            probs = by_name.get(var_name, {}).get(field, [])
+            key_problems = [p for p in probs if p.get('field_part') == 'key']
+            extra_attr_key_errors.append([
                 _err_text(
                     problem['message'], problem['severity'],
                     problem.get('link_text'), problem.get('link_url')
                 )
-                if is_key_problem else []
-            )
+                for problem in key_problems
+            ])
 
         return children, classes, record_errors, extra_attr_errors, extra_attr_value_classes, extra_attr_key_classes, extra_attr_key_errors, extra_section_errors
 

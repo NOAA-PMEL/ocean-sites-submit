@@ -239,7 +239,8 @@ def register_callbacks(app):
                 'var_type': var.get('var_type', ''),
                 'dtype': var.get('dtype', ''),
                 'dimensions': flat_dims,
-                'attributes': var
+                'attributes': var,
+                'observed_values': var.get('observed_values'),
             })
         vars_children = []
         for var in vars_store:

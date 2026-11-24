@@ -556,9 +556,10 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     seen: set = set()
 
     def add(p: Problem):
-        if p.key in seen:
-            return # first message for a field wins, it si the more specific one
-        seen.add(p.key)
+        dedup_key = (p.key, p.message)
+        if dedup_key in seen:
+            return
+        seen.add(dedup_key)
         problems.append(p)
 
     current = current or {}
@@ -611,6 +612,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for var in variables:
         for p in _validate_variable(var):
             add(p)
+    for p in _flag_data_values_problems(variables):
+        add(p)
     for p in _ancillary_variable_problems(variables):
         add(p)
     for p in _ancillary_reference_problems(variables):
@@ -620,8 +623,6 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for p in _coordinate_attribute_problems(variables):
         add(p)
     for p in _dimension_order_problems(variables):
-        add(p)
-    for p in _flag_data_values_problems(variables):
         add(p)
 
     return [asdict(p) for p in problems]
@@ -1225,7 +1226,7 @@ def _flag_data_values_problems(variables: list[dict]) -> list[Problem]:
                 field="flag_values",
                 severity=ERROR,
                 message=(
-                    f"Data for '{name}' contains flag value(s) not listed in "
+                    f"Data for '{name}' contains value(s) not listed in "
                     f"flag_values: {unexpected_str}."
                 ),
             ))
@@ -2059,12 +2060,10 @@ def variable_problems_by_name(problems: list) -> dict:
     out: dict = {}
 
     def add_problem(fields: dict, field: str, problem: dict) -> None:
-        existing = fields.get(field)
-        if (
-            existing is None
-            or (existing["severity"] == WARNING and problem["severity"] == ERROR)
-        ):
-            fields[field] = problem
+        bucket = fields.setdefault(field, [])
+        if problem not in bucket:
+            bucket.append(problem)
+            bucket.sort(key=lambda item: 0 if item["severity"] == ERROR else 1)
 
     for p in problems or []:
         if p["scope"] != VARIABLE:
