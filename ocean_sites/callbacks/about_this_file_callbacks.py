@@ -1,6 +1,7 @@
 from math import e
+import time
 import uuid
-from dash import Input, Output, State, ALL, ctx, html, MATCH, Patch
+from dash import Input, Output, State, ALL, ctx, html, MATCH, Patch, no_update
 from dash.exceptions import PreventUpdate
 from ocean_sites.layouts import (
     _extra_attr_row,
@@ -11,7 +12,13 @@ from ocean_sites.layouts import (
     diff_badge_children, 
     diff_badge_style
     )
-from ocean_sites.utils import _format_value_for_ui, global_problems_by_field
+from ocean_sites.utils import (
+    _format_value_for_ui,
+    global_problems_by_field, 
+    validate_metadata,
+    build_metadata_diff
+    )
+from ocean_sites.utils.metadata_diff import GLOBAL_ATTR_ENUM_FIELDS, _coerce_enum
 from portal_core.utils import app_logger as log
 
 def register_callbacks(app):
@@ -139,6 +146,8 @@ def register_callbacks(app):
         Output('nc-vars-store', 'data'),
         Output('nc-var-count', 'children'),
         Output('nc-dimension-strip', 'children'),
+        Output('metadata-problems-store', 'data', allow_duplicate=True),
+        Output('metadata-diff-store', 'data', allow_duplicate=True),
 
         Input('metadata-load-signal-store', 'data'),
         State('original-parsed-data-store', 'data'),
@@ -146,9 +155,18 @@ def register_callbacks(app):
         )
     def load_and_render_metadata_from_db(metadata_store, original_store):
         log.debug(f"[load_and_render_metadata_from_db]: attempting to load and render data from db...")
+        
+        original_store = (
+            metadata_store.get('_original_dict')
+            if isinstance(metadata_store, dict) and '_original_dict' in metadata_store
+            else original_store
+        )
+        
+        should_open = isinstance(metadata_store, dict) and bool(metadata_store.get('_open_modal'))
+        ready_signal = {'ts': time.time()} if should_open else None
 
         # TO prevent metadata_store being populated with stale data from other submissions
-        if not metadata_store or metadata_store == {}:
+        if not metadata_store or (not metadata_store.get("global_attributes") and not metadata_store.get("variables")):
             empty_msg = [
                 html.P(
                     'No additional attributes found.',
@@ -161,6 +179,7 @@ def register_callbacks(app):
                     }
                 )
             ]
+
             return (
                 empty_msg,  # nc-extra-attrs-container
                 [],         # nc-extra-attrs-store
@@ -170,7 +189,8 @@ def register_callbacks(app):
                 [],         # nc-var-cards-container
                 [],         # nc-vars-store
                 "0 variables",  # nc-var-count
-                []          # nc-dimension-strip
+                [],          # nc-dimension-strip
+                [], None
             )
         # ------------------------------------------------------------------------------------------
 
@@ -260,6 +280,16 @@ def register_callbacks(app):
         # 2. Build dimensions strip
         dimensions = metadata_store.get("dimensions", [])
         dimensions_children = [_dimension_strip(dimensions)]
+
+        # Coerce invalid enum values to None so initial validation matches the UI dropdowns
+        normalized_global = dict(required_global_attrs)
+        for field, enum_cls in GLOBAL_ATTR_ENUM_FIELDS.items():
+            if _coerce_enum(normalized_global.get(field), enum_cls) is None:
+                normalized_global[field] = None
+        normalized_meta = {**metadata_store, "global_attributes": normalized_global}
+
+        problems = validate_metadata(normalized_meta, original_store)
+        diff = build_metadata_diff(original_store, normalized_meta) if original_store else None
      
         return (
             extra_global_attrs_children, 
@@ -283,6 +313,8 @@ def register_callbacks(app):
             vars_store, 
             f"{len(vars_store)} variables",
             dimensions_children,
+            problems, 
+            diff
             )
 
     @app.callback(
@@ -362,15 +394,19 @@ def register_callbacks(app):
         Output({'type': 'nc-extra-attr-key', 'index': ALL}, 'className'),
         Output({'type': 'nc-extra-attr-err', 'index': ALL}, 'children'),
         Output({'type': 'nc-extra-attr-value', 'index': ALL}, 'className'),
+        Output('metadata-ready-store', 'data'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
         State({'type': 'nc-extra-attr-key', 'index': ALL}, 'id'),
         State({'type': 'nc-extra-attr-key', 'index': ALL}, 'value'),
+        State('open-metadata-store', 'data'),
+        State('metadata-modal-overlay', 'style'),
         prevent_initial_call=True
     )
     def update_global_field_errors(
-        problems, mode, submission_id, extra_attr_key_ids, extra_attr_key_values
+        problems, mode, submission_id, extra_attr_key_ids, extra_attr_key_values,
+    open_metadata_store, modal_style
     ):
         #loud = bool(submission_id) and (mode or {}).get('loud_for') == submission_id
         #if not loud:
@@ -462,6 +498,13 @@ def register_callbacks(app):
                 if p else 'nc-extra-attr-value'
             )
      
+        is_closed = (modal_style or {}).get('display') in (None, 'none')
+        ready_signal = (
+            {'ts': time.time()}
+            if (is_closed and open_metadata_store is not None and problems is not None)
+            else no_update
+        )
+
         return (
             children,
             classes,
@@ -469,4 +512,5 @@ def register_callbacks(app):
             extra_attr_key_classes,
             extra_attr_errors,
             extra_attr_value_classes,
+            ready_signal,
         )

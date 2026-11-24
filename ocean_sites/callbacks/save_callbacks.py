@@ -148,12 +148,15 @@ def register_callbacks(app):
                 style={'color': '#f76f6f', 'fontSize': '12px', 'marginTop': '8px', 'fontWeight': 'bold'}
             ), no_update, no_update
         
+        metadata_dict['_submission_id'] = state_current_submission
+        load_signal = {**metadata_dict, '_original_dict': metadata_dict}
+        
         return metadata_dict, metadata_dict, html.Div(
                 f"✅ Successfully parsed metadata from {filename} "
                 f"({len(metadata_dict.get('variables', []))} variables, {len(metadata_dict.get('dimensions', []))} dimensions) "
                 f"Please review metadata in step 3.",
                 style={'color': '#38d9a9', 'fontSize': '12px', 'marginTop': '8px', 'fontWeight': 'bold'},
-            ), metadata_dict, metadata_dict
+            ), metadata_dict, load_signal
 
     @app.callback(
         Output('edited-parsed-data-store', 'data', allow_duplicate=True),
@@ -162,9 +165,10 @@ def register_callbacks(app):
         Output('data-parse-status', 'children', allow_duplicate=True),   # <-- Clear file parse alerts
         Output('metadata-save-status', 'children', allow_duplicate=True),   # <-- Clear draft save alerts
         Input('current-submission', 'data'),
+        Input('open-metadata-store', 'data'),
         prevent_initial_call=True
     )
-    def load_existing_ocean_sites_metadata(state_current_submission):
+    def load_existing_ocean_sites_metadata(state_current_submission, open_metadata_store):
         """
         Fires when the workspace loads/switches to a submission. If metadata was
         already saved for this submission (from a prior upload + edit session),
@@ -178,6 +182,11 @@ def register_callbacks(app):
         log.info("Attempting to load ocean sites metadata from DB....")
         if not state_current_submission:
             raise PreventUpdate
+
+        should_open = (
+            'open-metadata-store.data' in ctx.triggered_prop_ids
+            and open_metadata_store is not None
+        )
         
         with Session(postgres_engine) as session:
             metadata_dict = load_ocean_sites_metadata(
@@ -189,11 +198,21 @@ def register_callbacks(app):
                 submission_id=state_current_submission
             )
 
-        if metadata_dict is None: 
-            return {}, {}, {}, "", ""
+        if metadata_dict is None:
+            load_signal = {'_open_modal': True} if should_open else None
+            return {}, {}, load_signal, "", ""
+
+        metadata_dict['_submission_id'] = state_current_submission
+        if original_dict is not None:
+            original_dict['_submission_id'] = state_current_submission
+
+        load_signal = {**metadata_dict, 
+                      '_open_modal': should_open,
+                      '_original_dict': original_dict,
+                      }
 
         log.info("The metadata was successfully loaded from the DB and added to the edited-parsed-data-store")
-        return metadata_dict, original_dict, metadata_dict, "", ""
+        return metadata_dict, original_dict, load_signal, "", ""
 
     @app.callback(
         Output('notifications', 'children', allow_duplicate=True),
@@ -417,6 +436,7 @@ def register_callbacks(app):
 
         State('edited-parsed-data-store', 'data'),
         State({'type': 'nc-var-extra-store', 'index': ALL}, 'id'),
+        State('current-submission', 'data'),
         prevent_initial_call=True
     )
     def sync_edited_store(
@@ -433,7 +453,7 @@ def register_callbacks(app):
         standard_name_ids, long_name_ids, units_ids, fill_value_ids, coordinate_ids, axis_ids,
         flag_values_ids, flag_meanings_ids,
         var_extra_attr_key_ids, var_extra_attr_value_ids, current_edited_data,
-        var_extra_store_ids2
+        var_extra_store_ids2, submission_id
     ):
         """
         Mirrors live filed values into edited-parsed-data-store on every debounced
@@ -444,7 +464,12 @@ def register_callbacks(app):
             raise PreventUpdate
 
         # Guard against premature sync calls during form initialization/loading
-        if not vars_store:
+        if (
+            not vars_store
+            or ctx.triggered_id == 'nc-vars-store'
+            or current_edited_data.get('_submission_id') != submission_id
+            or len(standard_name_ids) != len(vars_store)
+        ):
             raise PreventUpdate
 
         var_extra_stores = [
@@ -495,6 +520,8 @@ def register_callbacks(app):
         every field edit once those inputs feed this store live
         """
         if not original or not current:
+            return None  # clears stale badges immediately while loading
+        if original.get("_submission_id") != current.get("_submission_id"):
             raise PreventUpdate
 
         return build_metadata_diff(original, current)
