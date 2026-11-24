@@ -604,7 +604,7 @@ def register_callbacks(app):
             classes.append(f"nc-field-wrap is-{p['severity']}" if p else 'nc-field-wrap')
 
         visible_fields = {
-            'standard_name', 'units', 'fill_value', 'coordinates', 'axis',
+            'standard_name', 'long_name', 'units', 'fill_value', 'coordinates', 'axis',
             'flag_values', 'flag_meanings',
         }
         record_errors = []

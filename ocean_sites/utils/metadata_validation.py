@@ -733,14 +733,14 @@ def _validate_variable(var: dict) -> list:
                 field="dtype",
                 message="DM variables must use the NetCDF Char datatype.",
             ))
-        extra_attrs = cleaned_var.get("extra_attrs")
-        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
-        if long_name != "data mode":
+        long_name = cleaned_var.get("long_name")
+        if not isinstance(long_name, str) or not long_name.strip():
             problems.append(Problem(
                 scope=VARIABLE,
                 var_name=name,
-                field="extra_attrs",
-                message='DM variables must have long_name set to "data mode".',
+                severity=WARNING,
+                field="long_name",
+                message='DM variables require a long_name attribute.',
             ))
 
     if var_type == "uncertainty":
@@ -752,13 +752,12 @@ def _validate_variable(var: dict) -> list:
                 field="dtype",
                 message="Uncertainty variables must use the NetCDF Float datatype.",
             ))
-        extra_attrs = cleaned_var.get("extra_attrs")
-        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
+        long_name = cleaned_var.get("long_name")
         if not isinstance(long_name, str) or not long_name.strip():
             problems.append(Problem(
                 scope=VARIABLE,
                 var_name=name,
-                field="extra_attrs",
+                field="long_name",
                 message="Uncertainty variables require a long_name attribute.",
             ))
 
@@ -1259,7 +1258,7 @@ def _numeric_attr_problems(var: dict) -> list[Problem]:
     if "valid_min" in parsed_attrs and "valid_max" in parsed_attrs:
         vmin = dt.type(parsed_attrs["valid_min"])
         vmax = dt.type(parsed_attrs["valid_max"])
-        if not (math.isnan(vmin) or math.isnan(vmax)) and vmin >= vmax:
+        if not (math.isnan(vmin) or math.isnan(vmax)) and vmin > vmax:
             problems.append(Problem(
                 scope=VARIABLE,
                 var_name=name,
