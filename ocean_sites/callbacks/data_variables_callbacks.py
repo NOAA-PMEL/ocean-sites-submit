@@ -34,6 +34,8 @@ _VAR_TYPE_LABLES = {
     'dm': 'DM',
     'uncertainty': 'uncertainty'
 }
+_EXTRA_SECTION_FIELDS = {'ancillary_variables'}
+
 def register_callbacks(app):
 
     @app.callback(
@@ -557,6 +559,7 @@ def register_callbacks(app):
         Output({'type': 'nc-var-extra-attr-value', 'index': ALL, 'attr_uid': ALL}, 'className'),
         Output({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'className'),
         Output({'type': 'nc-var-extra-attr-key-err', 'index': ALL, 'attr_uid': ALL}, 'children'),
+        Output({'type': 'nc-var-extra-section-err', 'index': ALL}, 'children'),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
@@ -564,10 +567,11 @@ def register_callbacks(app):
         State('nc-vars-store', 'data'),
         State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'id'),
         State({'type': 'nc-var-extra-attr-key', 'index': ALL, 'attr_uid': ALL}, 'value'),
+        State({'type': 'nc-var-extra-section-err', 'index': ALL}, 'id'),
         prevent_initial_call=True
     )
     def update_var_field_errors(
-        problems, mode, submission_id, body_styles, vars_store, extra_attr_key_ids, extra_attr_key_values
+        problems, mode, submission_id, body_styles, vars_store, extra_attr_key_ids, extra_attr_key_values, extra_section_err_ids
     ):
         #problems = _visible_problems(problems, mode, submission_id)
         by_name = variable_problems_by_name(problems)
@@ -621,7 +625,26 @@ def register_callbacks(app):
                     problem.get('link_text'), problem.get('link_url')
                 )
                 for field, problem in field_problems.items()
-                if field not in visible_fields and field not in extra_fields
+                if field not in visible_fields
+                and field not in extra_fields
+                and field not in _EXTRA_SECTION_FIELDS
+            ])
+
+        extra_section_errors = []
+        for id_ in extra_section_err_ids:
+            var_name = name_by_uid.get(id_['index'])
+            field_problems = by_name.get(var_name, {})
+            extra_fields = {
+                field for (uid, _), field in extra_attr_keys.items()
+                if uid == id_['index']
+            }
+            extra_section_errors.append([
+                _err_text(
+                    problem['message'], problem['severity'],
+                    problem.get('link_text'), problem.get('link_url')
+                )
+                for field, problem in field_problems.items()
+                if field in _EXTRA_SECTION_FIELDS and field not in extra_fields
             ])
 
         extra_attr_errors = []
@@ -674,7 +697,7 @@ def register_callbacks(app):
                 if is_key_problem else []
             )
 
-        return children, classes, record_errors, extra_attr_errors, extra_attr_value_classes, extra_attr_key_classes, extra_attr_key_errors
+        return children, classes, record_errors, extra_attr_errors, extra_attr_value_classes, extra_attr_key_classes, extra_attr_key_errors, extra_section_errors
 
 
 

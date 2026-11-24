@@ -615,6 +615,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         add(p)
     for p in _ancillary_reference_problems(variables):
         add(p)
+    for p in _missing_ancillary_reference_problems(variables):
+        add(p)
     for p in _coordinate_attribute_problems(variables):
         add(p)
     for p in _dimension_order_problems(variables):
@@ -1852,6 +1854,102 @@ def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
                         f"Referenced variable(s) not found: {', '.join(missing)}."
                     ),
                 ))
+
+    return problems
+
+def _get_ancillary_list(var: dict) -> list[str]:
+    raw = (
+        var.get("ancillary_variables")
+        or (var.get("extra_attrs") or {}).get("ancillary_variables")
+        or (var.get("attributes") or {}).get("ancillary_variables")
+        or ""
+    )
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return str(raw).strip().split()
+
+
+def _missing_ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
+    """
+    Bidirectional ancillary_variables check: if a variable's name matches a parent
+    parameter (e.g. PARAM_QC, PARAM_DM, PARAMraw) or is POSITION_QC, warn when
+    the parent variable does not list it in `ancillary_variables`.
+    """
+    var_by_name = {v["name"]: v for v in variables if v.get("name")}
+
+    # Exclude CF bounds variables (e.g. TIME_BOUNDS) from being treated as ancillary_variables
+    bounds_vars = {
+        str(
+            v.get("bounds")
+            or (v.get("extra_attrs") or {}).get("bounds")
+            or (v.get("attributes") or {}).get("bounds")
+            or ""
+        ).strip()
+        for v in variables
+    } - {""}
+
+    # Map X/Y coordinate variables by axis so POSITION_QC isn't tied to hardcoded names
+    xy_parents = [
+        v["name"] for v in variables
+        if v.get("name") and str(
+            v.get("axis")
+            or (v.get("extra_attrs") or {}).get("axis")
+            or (v.get("attributes") or {}).get("axis")
+            or ""
+        ).strip().upper() in {"X", "Y"}
+    ]
+
+    # Longest parent names first so the most specific parent always matches
+    parent_names = sorted(
+        (
+            v["name"] for v in variables
+            if v.get("name") and v.get("var_type") in {"data", "coordinate"}
+        ),
+        key=len,
+        reverse=True,
+    )
+    parent_patterns = [
+        (p, re.compile(rf"^{re.escape(p)}(?:_[A-Za-z0-9_]+|[a-z][a-z0-9_]*)$"))
+        for p in parent_names
+    ]
+
+    missing_by_parent: dict[str, list[str]] = {}
+
+    for var in variables:
+        anc_name = var.get("name")
+        if not anc_name or anc_name in bounds_vars:
+            continue
+
+        matched_parents: list[str] = []
+        if re.match(r"^POSITION(?:_[A-Za-z0-9_]+|[a-z][a-z0-9_]*)$", anc_name):
+            matched_parents = xy_parents
+        else:
+            for parent_name, pattern in parent_patterns:
+                if anc_name != parent_name and pattern.match(anc_name):
+                    matched_parents = [parent_name]
+                    break
+
+        for parent_name in matched_parents:
+            listed = set(_get_ancillary_list(var_by_name[parent_name]))
+            if anc_name not in listed:
+                missing_by_parent.setdefault(parent_name, []).append(anc_name)
+
+    problems: list[Problem] = []
+    for parent_name, missing in missing_by_parent.items():
+        existing = _get_ancillary_list(var_by_name[parent_name])
+        suggested = " ".join(existing + missing)
+        missing_str = ", ".join(missing)
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=parent_name,
+            field="ancillary_variables",
+            severity=WARNING,
+            message=(
+                f"Ancillary variable(s) {missing_str} exist in the file but are not listed "
+                f"in '{parent_name}:ancillary_variables'."
+            ),
+            valid_options=[suggested],
+        ))
 
     return problems
 
