@@ -468,7 +468,6 @@ def register_callbacks(app):
             not vars_store
             or ctx.triggered_id == 'nc-vars-store'
             or current_edited_data.get('_submission_id') != submission_id
-            or len(standard_name_ids) != len(vars_store)
         ):
             raise PreventUpdate
 

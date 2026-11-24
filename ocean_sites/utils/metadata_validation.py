@@ -1485,7 +1485,7 @@ def _temperature_units_metadata_problems(name: str, var: dict) -> list[Problem]:
             message=(
                 f"Variable '{name}' has a temperature-related standard_name and should "
                 f"include a 'units_metadata' attribute set to one of: "
-                f"{', '.join(_UNITS_METADATA_TEMPERATURE_VALUES)}."
+                f"{', '.join(repr(v) for v in _UNITS_METADATA_TEMPERATURE_VALUES)}."
             ),
             valid_options=list(_UNITS_METADATA_TEMPERATURE_VALUES),
         )]
@@ -1498,7 +1498,7 @@ def _temperature_units_metadata_problems(name: str, var: dict) -> list[Problem]:
             severity=WARNING,
             message=(
                 f"'units_metadata' should be one of: "
-                f"{', '.join(_UNITS_METADATA_TEMPERATURE_VALUES)}."
+                f"{', '.join(repr(v) for v in _UNITS_METADATA_TEMPERATURE_VALUES)}."
             ),
             invalid_value=val,
             valid_options=list(_UNITS_METADATA_TEMPERATURE_VALUES),
