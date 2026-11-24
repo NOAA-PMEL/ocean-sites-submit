@@ -221,6 +221,8 @@ _SPATIAL_AXIS_MIN_FIELDS = {
 
 _FILL_ATTR_RE = re.compile(r"^_?(fill|missing)_?value$", re.IGNORECASE)
 
+_CF_ATTR_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
 _SENSOR_MOUNT_VALUES = (
     "mounted_on_fixed_structure",
     "mounted_on_surface_buoy",
@@ -598,6 +600,10 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         globals_clean.get("extra_global_attrs")
     ):
         add(p)
+    for p in _attribute_name_problems(
+        globals_clean.get("extra_global_attrs"), GLOBAL
+    ):
+        add(p)
 
     variables = current.get("variables") or []
     for var in variables:
@@ -648,6 +654,7 @@ def _validate_variable(var: dict) -> list:
     problems.extend(_dm_indicator_problems(name, cleaned_var))
     problems.extend(_data_variable_name_problems(name, cleaned_var))
     problems.extend(_numeric_attr_problems(cleaned_var))
+    problems.extend(_attribute_name_problems(cleaned_var.get("extra_attrs"), VARIABLE, name))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
@@ -1263,7 +1270,38 @@ def _numeric_attr_problems(var: dict) -> list[Problem]:
             ))
 
     return problems
-    
+
+def _attribute_name_problems(
+    extra_attrs: dict | None,
+    scope: str,
+    var_name: str | None = None,
+) -> list[Problem]:
+    """Warn if any attribute name violates CF §2.3 naming conventions."""
+    problems: list[Problem] = []
+    if not extra_attrs:
+        return problems
+
+    for attr_name in extra_attrs:
+        if attr_name in {"_FillValue"}:
+            continue
+        if not _CF_ATTR_NAME_RE.match(attr_name):
+            suggested = re.sub(r"[^A-Za-z0-9_]+", "_", attr_name.strip()).strip("_")
+            hint = f" (e.g., '{suggested}')" if suggested and _CF_ATTR_NAME_RE.match(suggested) else ""
+            problems.append(Problem(
+                scope=scope,
+                var_name=var_name,
+                field=attr_name,
+                field_part="key",
+                severity=ERROR,
+                message=(
+                    f"Attribute name violates CF §2.3: names should start with a "
+                    f"letter and contain only letters, digits, and underscores{hint}."
+                ),
+                invalid_value=attr_name,
+            ))
+
+    return problems
+
 def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
     by_name = {str(var.get("name") or "").casefold(): var for var in variables}
     problems = []
