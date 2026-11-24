@@ -1,6 +1,7 @@
 from pathlib import Path
 import xarray as xr
 import numpy as np
+import re
 
 #TODO neet to sort out fill_value for when it is None
 # TODO: Need to save file path to submission id as "generated" in file table (this most likely needs to happend outside of this class and in the dash app)
@@ -10,6 +11,10 @@ class NetcdfCreator:
     STRUCTURAL_VAR_KEYS = {"name", "var_type", "dtype", "dimensions"}
     FILL_KEYS = {"fill_value"}
     ENCODING_ONLY = {"dtype", *FILL_KEYS}
+
+    _FILL_VALUE_RE = re.compile(r"^_?fill_?value$", re.IGNORECASE)
+    _MISSING_VALUE_RE = re.compile(r"^_?missing_?value$", re.IGNORECASE)
+    SCALAR_NUMERIC_ATTRS = {"valid_min", "valid_max"}
 
     def __init__(self, metadata_dict: dict, og_netcdf_filepath: str, final_filepath: str):
         """
@@ -42,7 +47,7 @@ class NetcdfCreator:
             flat_global_attrs = {**self.metadata_dict["global_attributes"], **extra}
             self.output_dataset.attrs = flat_global_attrs
 
-            unlimited = [d["name"] for d in self.metadata_dict.get("dimesnsions", []) if d.get("unlimited")]
+            unlimited = [d["name"] for d in self.metadata_dict.get("dimensions", []) if d.get("unlimited")]
 
             self.output_dataset.to_netcdf(
                 self.final_filepath,
@@ -53,7 +58,47 @@ class NetcdfCreator:
 
             print(f"Generated netCDF file successfully saved to: {self.final_filepath}")
 
+    def _cast_var_attrs(self, attrs: dict, dtype: np.dtype, var_name: str) -> dict:
+        """Cast numeric CF attributes so their NetCDF dtype matches the parent variable."""
+        is_numeric = np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.floating)
+        if not is_numeric:
+            return attrs
 
+        casted = {}
+        for k, v in attrs.items():
+            # Skip empty strings / None so we don't write blank attributes
+            if v is None or (isinstance(v, str) and not v.strip()):
+                continue
+
+            if k in self.SCALAR_NUMERIC_ATTRS or self._MISSING_VALUE_RE.match(k):
+                out_key = "missing_value" if self._MISSING_VALUE_RE.match(k) else k
+                try:
+                    num = float(v) if isinstance(v, str) else v
+                    casted[out_key] = dtype.type(num)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Attribute {k!r} ({v!r}) for variable {var_name!r} "
+                        f"is not compatible with dtype {dtype}"
+                    ) from exc
+
+            elif k == "flag_values":
+                try:
+                    if isinstance(v, str):
+                        parts = [p for p in v.replace(",", " ").split() if p]
+                        casted[k] = np.array([float(p) for p in parts], dtype=dtype)
+                    else:
+                        casted[k] = np.asarray(v, dtype=dtype)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Attribute 'flag_values' ({v!r}) for variable {var_name!r} "
+                        f"is not compatible with dtype {dtype}"
+                    ) from exc
+
+            else:
+                casted[k] = v
+
+        return casted
+        
     def create_var_metadata(self, og_xr_dataset: xr.Dataset):
 
         for var in self.metadata_dict.get("variables", []):
@@ -62,18 +107,22 @@ class NetcdfCreator:
             dtype = np.dtype(var["dtype"])
 
             # Flatten attribute/value dicitonary
-            extra = var.pop("extra_attrs", {})
+            extra = var.get("extra_attrs") or {}
             flat = {**var, **extra}
+
+            # Fill Value (catches fill_value, _FillValue, _fillvalue, FillValue, etc.)
+            fill_value = self._extract_fill_value(flat, dtype)
 
             # Attributes
             attrs = {
-                k: v 
+                k: v
                 for k, v in flat.items()
-                if k not in self.STRUCTURAL_VAR_KEYS and k not in self.ENCODING_ONLY
+                if k not in self.STRUCTURAL_VAR_KEYS
+                and k not in self.ENCODING_ONLY
+                and k != "extra_attrs"
+                and not self._FILL_VALUE_RE.match(k)
             }
-
-            # Fill Value
-            fill_value = self._extract_fill_value(var, dtype)
+            attrs = self._cast_var_attrs(attrs, dtype, name)
 
             # verify the variable from metadata dict is in data
             if name not in og_xr_dataset.variables:
@@ -112,7 +161,7 @@ class NetcdfCreator:
             var_encoding = {"dtype": dtype}
             var_encoding["_FillValue"] = fill_value
 
-            src_encoding = xr_dataset[name].encoding
+            src_encoding = og_xr_dataset[name].encoding
             if src_encoding.get("zlib"):
                 var_encoding["zlib"] = True
                 var_encoding["complevel"] = src_encoding.get("complevel", 4)
@@ -123,18 +172,24 @@ class NetcdfCreator:
             self.encoding[name] = var_encoding
 
 
-    def _extract_fill_value(self, var, dtype):
+    def _extract_fill_value(self, flat_var, dtype):
         """
         Pull the fill value out of a variable dict and cast it to dtype
         """
-        for key in self.FILL_KEYS:
-            if key in var and var[key] is not None:
+        dt = np.dtype(dtype)
+        is_numeric = np.issubdtype(dt, np.integer) or np.issubdtype(dt, np.floating)
+        candidate_keys = [k for k in flat_var if self._FILL_VALUE_RE.match(k)]
+
+        for key in candidate_keys:
+            val = flat_var.get(key)
+            if val is not None and not (isinstance(val, str) and not val.strip()):
                 try:
-                    return np.dtype(dtype).type(var[key])
+                    val_to_cast = float(val) if (is_numeric and isinstance(val, str)) else val
+                    return dt.type(val_to_cast)
                 except (TypeError, ValueError) as exc:
                     raise ValueError(
-                        f"fill value {var[key]!r} for variable {var.get('name')!r} "
-                        f" is not compatible with dtype {dtype}"
+                        f"fill value {val!r} for variable {flat_var.get('name')!r} "
+                        f"is not compatible with dtype {dtype}"
                     ) from exc
         return None
         

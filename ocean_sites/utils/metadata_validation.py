@@ -33,6 +33,7 @@ import json
 import os
 import re
 import math
+import numpy as np
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Any, Optional
@@ -218,7 +219,11 @@ _SPATIAL_AXIS_MIN_FIELDS = {
     "Z": "geospatial_vertical_min",
 }
 
+_AXIS_ORDER = {"T": 0, "Z": 1, "Y": 2, "X": 3}
+
 _FILL_ATTR_RE = re.compile(r"^_?(fill|missing)_?value$", re.IGNORECASE)
+
+_CF_ATTR_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 _SENSOR_MOUNT_VALUES = (
     "mounted_on_fixed_structure",
@@ -597,6 +602,10 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         globals_clean.get("extra_global_attrs")
     ):
         add(p)
+    for p in _attribute_name_problems(
+        globals_clean.get("extra_global_attrs"), GLOBAL
+    ):
+        add(p)
 
     variables = current.get("variables") or []
     for var in variables:
@@ -607,6 +616,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for p in _ancillary_reference_problems(variables):
         add(p)
     for p in _coordinate_attribute_problems(variables):
+        add(p)
+    for p in _dimension_order_problems(variables):
         add(p)
 
     return [asdict(p) for p in problems]
@@ -646,6 +657,8 @@ def _validate_variable(var: dict) -> list:
     problems.extend(_qc_indicator_problems(name, cleaned_var))
     problems.extend(_dm_indicator_problems(name, cleaned_var))
     problems.extend(_data_variable_name_problems(name, cleaned_var))
+    problems.extend(_numeric_attr_problems(cleaned_var))
+    problems.extend(_attribute_name_problems(cleaned_var.get("extra_attrs"), VARIABLE, name))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
@@ -724,14 +737,14 @@ def _validate_variable(var: dict) -> list:
                 field="dtype",
                 message="DM variables must use the NetCDF Char datatype.",
             ))
-        extra_attrs = cleaned_var.get("extra_attrs")
-        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
-        if long_name != "data mode":
+        long_name = cleaned_var.get("long_name")
+        if not isinstance(long_name, str) or not long_name.strip():
             problems.append(Problem(
                 scope=VARIABLE,
                 var_name=name,
-                field="extra_attrs",
-                message='DM variables must have long_name set to "data mode".',
+                severity=WARNING,
+                field="long_name",
+                message='DM variables require a long_name attribute.',
             ))
 
     if var_type == "uncertainty":
@@ -743,13 +756,12 @@ def _validate_variable(var: dict) -> list:
                 field="dtype",
                 message="Uncertainty variables must use the NetCDF Float datatype.",
             ))
-        extra_attrs = cleaned_var.get("extra_attrs")
-        long_name = extra_attrs.get("long_name") if isinstance(extra_attrs, dict) else None
+        long_name = cleaned_var.get("long_name")
         if not isinstance(long_name, str) or not long_name.strip():
             problems.append(Problem(
                 scope=VARIABLE,
                 var_name=name,
-                field="extra_attrs",
+                field="long_name",
                 message="Uncertainty variables require a long_name attribute.",
             ))
 
@@ -956,6 +968,76 @@ def _coordinate_attribute_problems(variables: list) -> list[Problem]:
 
     return problems
 
+def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
+    """
+    CF §2.4 / OceanSITES: arbitrary dimensions belong to the left of
+    spatiotemporal dimensions, and spatiotemporal dimensions must appear in
+    (T, Z, Y, X) order based on each coordinate variable's `axis` attribute.
+    """
+    problems: list[Problem] = []
+
+    var_to_axis = {}
+    for v in variables:
+        if v.get("name"):
+            axis_val = (
+                v.get("axis")
+                or (v.get("extra_attrs") or {}).get("axis")
+                or (v.get("attributes") or {}).get("axis")
+                or ""
+            )
+            var_to_axis[v["name"]] = str(axis_val).strip().upper()
+
+    bounds_vars = {
+        str(
+            v.get("bounds")
+            or (v.get("extra_attrs") or {}).get("bounds")
+            or (v.get("attributes") or {}).get("bounds")
+            or ""
+        ).strip()
+        for v in variables
+    } - {""}
+
+    for var in variables:
+        name = var.get("name") or "(unnamed)"
+        raw_dims = var.get("dimensions") or []
+        dims = raw_dims.strip().split() if isinstance(raw_dims, str) else list(raw_dims)
+
+        dtype = str(var.get("dtype") or "").lower()
+        has_trailing_dim = dtype in {"|s1", "s1", "char"} or name in bounds_vars
+        trailing_dim = (
+            [dims[-1]]
+            if has_trailing_dim and len(dims) > 1 and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
+            else []
+        )
+        check_dims = dims[:-1] if trailing_dim else dims
+
+        other_dims = [d for d in check_dims if var_to_axis.get(d) not in _AXIS_ORDER]
+        st_dims = sorted(
+            (d for d in check_dims if var_to_axis.get(d) in _AXIS_ORDER),
+            key=lambda d: _AXIS_ORDER[var_to_axis[d]],
+        )
+
+        if not st_dims:
+            continue
+
+        expected_dims = other_dims + st_dims + trailing_dim
+
+        if dims != expected_dims:
+            expected_str = " ".join(expected_dims)
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                severity=WARNING,
+                message=(
+                    f"Spatiotemporal dimensions should be in (T, Z, Y, X) "
+                    f"order with any other dimensions to their left. Expected '({expected_str})'."
+                ),
+                valid_options=[expected_str],
+            ))
+
+    return problems
+
 def _global_qc_indicator_problems(global_attrs: dict) -> list[Problem]:
     if not isinstance(global_attrs, dict) or "QC_indicator" not in global_attrs:
         return []
@@ -1109,6 +1191,187 @@ def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
             invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
             valid_options=list(valid_options),
         ))
+
+    return problems
+
+def _parse_numeric(val):
+    """Return a float/int if val is numeric (or a numeric string), else None."""
+    if isinstance(val, bool) or val is None:
+        return None
+    if isinstance(val, (int, float, np.number)):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except ValueError:
+            try:
+                return float(s)
+            except ValueError:
+                return None
+    return None
+
+def _numeric_attr_problems(var: dict) -> list[Problem]:
+    """
+    Validate that fill/missing value attributes, valid_min, and valid_max:
+      1. Are numeric and compatible with the parent variable's dtype.
+      2. All fill/missing attributes (e.g., _FillValue and missing_value) agree in value.
+    """
+    problems: list[Problem] = []
+    name = var.get("name") or "(unnamed)"
+    raw_dtype = var.get("dtype")
+
+    try:
+        dt = np.dtype(raw_dtype) if raw_dtype else None
+    except TypeError:
+        dt = None
+
+    if dt is None or not (np.issubdtype(dt, np.integer) or np.issubdtype(dt, np.floating)):
+        return problems
+
+    extra = var.get("extra_attrs") or {}
+
+    # 1. Collect all numeric attributes to check (top-level + extra_attrs)
+    attrs_to_check: dict[str, object] = {}
+
+    if var.get("fill_value") is not None:
+        attrs_to_check["fill_value"] = var["fill_value"]
+    for k in ("valid_min", "valid_max"):
+        if var.get(k) is not None:
+            attrs_to_check[k] = var[k]
+        elif k in extra:
+            attrs_to_check[k] = extra[k]
+
+    # Pick up any _FillValue / missing_value variants from extra_attrs via _FILL_ATTR_RE
+    for k, v in extra.items():
+        if _FILL_ATTR_RE.match(k):
+            attrs_to_check[k] = v
+
+    parsed_fill_values: dict[str, int | float] = {}
+    parsed_attrs: dict[str, int | float] = {}
+
+    # 2. Validate numeric parsing and dtype compatibility
+    for attr_name, raw_val in attrs_to_check.items():
+        if raw_val is None or (isinstance(raw_val, str) and not raw_val.strip()):
+            continue
+
+        num = _parse_numeric(raw_val)
+        if num is None:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field=attr_name,
+                severity=ERROR,
+                message=f"'{attr_name}' must be a numeric value matching {dt.name}, not '{raw_val}'.",
+                invalid_value=str(raw_val),
+            ))
+            continue
+
+        if np.issubdtype(dt, np.integer):
+            info = np.iinfo(dt)
+            if isinstance(num, float) and not num.is_integer():
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=attr_name,
+                    severity=ERROR,
+                    message=f"'{attr_name}' ({raw_val}) cannot have a fractional value for integer type {dt.name}.",
+                    invalid_value=str(raw_val),
+                ))
+                continue
+            if not (info.min <= num <= info.max):
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=attr_name,
+                    severity=ERROR,
+                    message=f"'{attr_name}' ({raw_val}) is out of range for {dt.name} ({info.min} to {info.max}).",
+                    invalid_value=str(raw_val),
+                ))
+                continue
+
+        elif np.issubdtype(dt, np.floating):
+            info = np.finfo(dt)
+            if math.isfinite(num) and not (info.min <= num <= info.max):
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=attr_name,
+                    severity=ERROR,
+                    message=f"'{attr_name}' ({raw_val}) overflows {dt.name} range.",
+                    invalid_value=str(raw_val),
+                ))
+                continue
+
+        parsed_attrs[attr_name] = num
+        if _FILL_ATTR_RE.match(attr_name):
+            parsed_fill_values[attr_name] = num
+
+    # 3. If multiple fill/missing attributes exist, verify they are all equal
+    if len(parsed_fill_values) > 1:
+        items = list(parsed_fill_values.items())
+        ref_name, ref_raw = items[0]
+        ref_val = dt.type(ref_raw)
+
+        for other_name, other_raw in items[1:]:
+            other_val = dt.type(other_raw)
+            both_nan = math.isnan(ref_val) and math.isnan(other_val)
+            if not both_nan and ref_val != other_val:
+                problems.append(Problem(
+                    scope=VARIABLE,
+                    var_name=name,
+                    field=other_name,
+                    severity=ERROR,
+                    message=f"'{other_name}' ({other_raw}) must equal '{ref_name}' ({ref_raw}).",
+                #    also_fields=[ref_name],
+                ))
+
+    # 4. Check valid_min < valid_max
+    if "valid_min" in parsed_attrs and "valid_max" in parsed_attrs:
+        vmin = dt.type(parsed_attrs["valid_min"])
+        vmax = dt.type(parsed_attrs["valid_max"])
+        if not (math.isnan(vmin) or math.isnan(vmax)) and vmin > vmax:
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="valid_min",
+                severity=ERROR,
+                message=f"'valid_min' ({parsed_attrs['valid_min']}) must be less than 'valid_max' ({parsed_attrs['valid_max']}).",
+                #also_fields=["valid_max"],
+            ))
+
+    return problems
+
+def _attribute_name_problems(
+    extra_attrs: dict | None,
+    scope: str,
+    var_name: str | None = None,
+) -> list[Problem]:
+    """Warn if any attribute name violates CF §2.3 naming conventions."""
+    problems: list[Problem] = []
+    if not extra_attrs:
+        return problems
+
+    for attr_name in extra_attrs:
+        if attr_name in {"_FillValue"}:
+            continue
+        if not _CF_ATTR_NAME_RE.match(attr_name):
+            suggested = re.sub(r"[^A-Za-z0-9_]+", "_", attr_name.strip()).strip("_")
+            hint = f" (e.g., '{suggested}')" if suggested and _CF_ATTR_NAME_RE.match(suggested) else ""
+            problems.append(Problem(
+                scope=scope,
+                var_name=var_name,
+                field=attr_name,
+                field_part="key",
+                severity=ERROR,
+                message=(
+                    f"Attribute name violates CF §2.3: names should start with a "
+                    f"letter and contain only letters, digits, and underscores{hint}."
+                ),
+                invalid_value=attr_name,
+            ))
 
     return problems
 

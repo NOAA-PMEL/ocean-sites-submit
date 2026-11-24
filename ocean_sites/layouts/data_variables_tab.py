@@ -263,12 +263,23 @@ def _imported_var_card(uid: str, name: str, var_type: str, dtype: str,
                                     html.Span(name, style={'fontSize': '13px', 'fontWeight': '600',
                                                         'fontFamily': 'monospace', 'color': _TEXT_COLOR}),
                                     html.Span(
-                                        id={'type': 'nc-var-field-wrap', 'index': uid, 'field': 'dtype'},
-                                        className='nc-field-wrap',
                                         style={'fontSize': '11px', 'color': '#666'},
                                         children=[
-                                            html.Span(dtype, className='nc-var-dtype'),
-                                            f' ⋅ ({dimensions})',
+                                            html.Span(
+                                                id={'type': 'nc-var-field-wrap', 'index': uid, 'field': 'dtype'},
+                                                className='nc-field-wrap',
+                                                children=[
+                                                    html.Span(dtype, className='nc-var-dtype'),
+                                                ],
+                                            ),
+                                            ' ⋅ ',
+                                            html.Span(
+                                                id={'type': 'nc-var-field-wrap', 'index': uid, 'field': 'dimensions'},
+                                                className='nc-field-wrap',
+                                                children=[
+                                                    html.Span(f'({dimensions})', className='nc-var-dimensions'),
+                                                ],
+                                            ),
                                         ],
                                     ),
                                     _var_type_badge(var_type),
