@@ -1,4 +1,6 @@
 import xarray as xr
+import re
+import numpy as np
 import netCDF4 as nc
 from portal_core.utils import app_logger as log
 from ocean_sites.utils.variable_types import infer_special_variable_type
@@ -26,6 +28,7 @@ class OceanSitesNetcdfParser:
     # SQL Alchemy NetcdfDimension fields
     SIZE = "size"
     UNLIMITED = "unlimited"
+    OBSERVED_VALUES = "observed_values"
 
     # VAR_TYPE enums for variables
     COORDINATE = "coordinate"
@@ -196,7 +199,15 @@ class OceanSitesNetcdfParser:
                     self.DTYPE: str(var.dtype),
                     self.DIMENSIONS: list(var.dims),
                     self.EXTRA_ATTRS: attribute_dict,
-                    } | required_fields # merge with required fields
+                } | required_fields
+
+                if (
+                    var_type in (self.QC, self.DM)
+                    or "flag_values" in var.attrs
+                    or "flag_meanings" in var.attrs
+                ):
+                    var_info[self.OBSERVED_VALUES] = self._extract_unique_flag_values(var)
+
                 variables.append(var_info)
         except Exception as e:
             log.error(f"An unexpected error occurred while reading netcdf data/qc variables: {e}")
@@ -282,3 +293,45 @@ class OceanSitesNetcdfParser:
             item.decode() if isinstance(item, bytes) else str(item)
             for item in values
         )
+
+    _FILL_ATTR_RE = re.compile(r"^_?fill_?value$|^missing_?value$", re.IGNORECASE)
+
+    @classmethod
+    def _extract_unique_flag_values(cls, var) -> list:
+        """Return sorted unique non-fill values from an xarray DataArray (decode_cf=False)."""
+        data = np.asarray(var.values).ravel()
+
+        # Collect all fill / missing values using flexible key matching
+        for key, raw_fill in var.attrs.items():
+            if not cls._FILL_ATTR_RE.match(str(key)) or raw_fill is None or not data.size:
+                continue
+            fill_vals = (
+                raw_fill.tolist() if hasattr(raw_fill, "tolist") else raw_fill
+            )
+            if not isinstance(fill_vals, (list, tuple)):
+                fill_vals = [fill_vals]
+            for fv in fill_vals:
+                if np.issubdtype(data.dtype, np.floating) and isinstance(fv, (float, np.floating)) and np.isnan(fv):
+                    data = data[~np.isnan(data)]
+                else:
+                    data = data[data != fv]
+
+        if np.issubdtype(data.dtype, np.floating) and data.size:
+            data = data[~np.isnan(data)]
+
+        if data.size == 0:
+            return []
+
+        result = []
+        for val in np.unique(data):
+            if isinstance(val, (bytes, np.bytes_)):
+                decoded = val.decode("utf-8", errors="replace").strip("\x00 ")
+                if decoded:
+                    result.append(decoded)
+            elif isinstance(val, np.integer):
+                result.append(int(val))
+            elif isinstance(val, np.floating):
+                result.append(int(val) if val.is_integer() else float(val))
+            else:
+                result.append(str(val))
+        return result

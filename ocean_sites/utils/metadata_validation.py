@@ -621,6 +621,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         add(p)
     for p in _dimension_order_problems(variables):
         add(p)
+    for p in _flag_data_values_problems(variables):
+        add(p)
 
     return [asdict(p) for p in problems]
 
@@ -1158,6 +1160,77 @@ def _dm_indicator_problems(name: str, var: dict) -> list[Problem]:
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=list(_DM_FLAG_VALUES),
     )]
+
+def _parse_flag_values(raw) -> set[str]:
+    """Normalize `flag_values` (list, comma, semi-colon,space- or pipe- separated) to comparable strings."""
+    if raw is None or raw == "":
+        return set()
+    if isinstance(raw, (list, tuple)):
+        tokens = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        tokens = [t for t in re.split(r"[\s,;|]+", str(raw).strip()) if t]
+
+    normalized = set()
+    for t in tokens:
+        try:
+            f = float(t)
+            normalized.add(str(int(f)) if f.is_integer() else str(f))
+        except ValueError:
+            normalized.add(t)
+    return normalized
+
+
+def _flag_data_values_problems(variables: list[dict]) -> list[Problem]:
+    """
+    CF §3.5: verify that every non-fill value present in a flag variable's data
+    array is declared in its `flag_values` attribute.
+    """
+    problems: list[Problem] = []
+
+    for var in variables:
+        observed = var.get("observed_values")
+        if not observed:
+            continue
+
+        name = var.get("name") or "(unnamed)"
+        raw_flag_values = (
+            var.get("flag_values")
+            or (var.get("extra_attrs") or {}).get("flag_values")
+            or (var.get("attributes") or {}).get("flag_values")
+        )
+        declared = _parse_flag_values(raw_flag_values)
+        if not declared:
+            # Missing flag_values itself is already handled by required-attribute checks
+            continue
+
+        # Also exclude _FillValue in case the user edited it in the UI
+        fill_val = (
+            var.get("_FillValue")
+            or (var.get("extra_attrs") or {}).get("_FillValue")
+            or (var.get("attributes") or {}).get("_FillValue")
+        )
+        fill_set = _parse_flag_values(fill_val)
+
+        unexpected = []
+        for val in observed:
+            norm = next(iter(_parse_flag_values(val)), str(val))
+            if norm not in declared and norm not in fill_set:
+                unexpected.append(norm)
+
+        if unexpected:
+            unexpected_str = ", ".join(unexpected)
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="flag_values",
+                severity=ERROR,
+                message=(
+                    f"Data for '{name}' contains flag value(s) not listed in "
+                    f"flag_values: {unexpected_str}."
+                ),
+            ))
+
+    return problems
 
 def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
     extra_attrs = var.get("extra_attrs")
