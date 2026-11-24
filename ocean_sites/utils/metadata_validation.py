@@ -219,6 +219,8 @@ _SPATIAL_AXIS_MIN_FIELDS = {
     "Z": "geospatial_vertical_min",
 }
 
+_AXIS_ORDER = {"T": 0, "Z": 1, "Y": 2, "X": 3}
+
 _FILL_ATTR_RE = re.compile(r"^_?(fill|missing)_?value$", re.IGNORECASE)
 
 _CF_ATTR_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -615,6 +617,8 @@ def validate_metadata(current: dict, original: dict = None) -> list:
         add(p)
     for p in _coordinate_attribute_problems(variables):
         add(p)
+    for p in _dimension_order_problems(variables):
+        add(p)
 
     return [asdict(p) for p in problems]
 
@@ -961,6 +965,67 @@ def _coordinate_attribute_problems(variables: list) -> list[Problem]:
                         message=f"OceanSITES prefers the coordinates order (T, Z, Y, X). Expected '{expected_str}'.",
                         valid_options=[expected_str] 
                     ))
+
+    return problems
+
+def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
+    """
+    CF §2.4 / OceanSITES: arbitrary dimensions belong to the left of
+    spatiotemporal dimensions, and spatiotemporal dimensions must appear in
+    (T, Z, Y, X) order based on each coordinate variable's `axis` attribute.
+    """
+    problems: list[Problem] = []
+
+    var_to_axis = {}
+    for v in variables:
+        if v.get("name"):
+            axis_val = (
+                v.get("axis")
+                or (v.get("extra_attrs") or {}).get("axis")
+                or (v.get("attributes") or {}).get("axis")
+                or ""
+            )
+            var_to_axis[v["name"]] = str(axis_val).strip().upper()
+
+    for var in variables:
+        name = var.get("name") or "(unnamed)"
+        raw_dims = var.get("dimensions") or []
+        dims = raw_dims.strip().split() if isinstance(raw_dims, str) else list(raw_dims)
+
+        dtype = str(var.get("dtype") or "").lower()
+        is_char = dtype in {"|s1", "s1", "char"}
+        trailing_strlen = (
+            [dims[-1]]
+            if is_char and len(dims) > 1 and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
+            else []
+        )
+        check_dims = dims[:-1] if trailing_strlen else dims
+
+        other_dims = [d for d in check_dims if var_to_axis.get(d) not in _AXIS_ORDER]
+        st_dims = sorted(
+            (d for d in check_dims if var_to_axis.get(d) in _AXIS_ORDER),
+            key=lambda d: _AXIS_ORDER[var_to_axis[d]],
+        )
+
+        if not st_dims:
+            continue
+
+        expected_dims = other_dims + st_dims + trailing_strlen
+
+        expected_dims = other_dims + st_dims
+        if dims != expected_dims:
+            expected_str = " ".join(expected_dims)
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                severity=WARNING,
+                message=(
+                    f"CF §2.4 / OceanSITES requires spatiotemporal dimensions in (T, Z, Y, X) "
+                    f"order with any other dimensions to their left. Expected '({expected_str})'."
+                ),
+                valid_options=[expected_str],
+            ))
 
     return problems
 

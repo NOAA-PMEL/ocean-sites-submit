@@ -20,12 +20,14 @@
 /* change datatype styling for errors 
 only shows when card is expanded
 */
-div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="display:none"])) .nc-field-wrap.is-error .nc-var-dtype {
+div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="display:none"])) .nc-field-wrap.is-error .nc-var-dtype,
+div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="display:none"])) .nc-field-wrap.is-error .nc-var-dimensions {
     color: #ff4d4d !important;
     font-weight: 600;
 }
 
-div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="display:none"])) .nc-field-wrap.is-warning .nc-var-dtype {
+div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="display:none"])) .nc-field-wrap.is-warning .nc-var-dtype,
+div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="display:none"])) .nc-field-wrap.is-warning .nc-var-dimensions {
     color: #f7b44f !important;
     font-weight: 600;
 }
