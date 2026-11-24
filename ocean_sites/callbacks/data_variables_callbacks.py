@@ -34,7 +34,7 @@ _VAR_TYPE_LABLES = {
     'dm': 'DM',
     'uncertainty': 'uncertainty'
 }
-_EXTRA_SECTION_FIELDS = {'ancillary_variables'}
+_EXTRA_SECTION_FIELDS = {'ancillary_variables', 'units_metadata'}
 
 def register_callbacks(app):
 

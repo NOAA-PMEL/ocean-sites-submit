@@ -244,6 +244,12 @@ _SENSOR_MOUNT_VALUES = (
 
 _SENSOR_ORIENTATION_VALUES = ("downward", "upward", "horizontal")
 
+_UNITS_METADATA_TEMPERATURE_VALUES = (
+    "temperature: difference",
+    "temperature: on_scale",
+    "temperature: unknown",
+)
+
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
     "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
@@ -664,6 +670,7 @@ def _validate_variable(var: dict) -> list:
     problems.extend(_data_variable_name_problems(name, cleaned_var))
     problems.extend(_numeric_attr_problems(cleaned_var))
     problems.extend(_attribute_name_problems(cleaned_var.get("extra_attrs"), VARIABLE, name))
+    problems.extend(_temperature_units_metadata_problems(name, cleaned_var))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
@@ -1450,6 +1457,54 @@ def _attribute_name_problems(
             ))
 
     return problems
+
+def _temperature_units_metadata_problems(name: str, var: dict) -> list[Problem]:
+    """
+    CF §3.1.2 (v1.11+): variables with a temperature standard_name should define
+    `units_metadata` as one of 'temperature: on_scale', 'temperature: difference',
+    or 'temperature: unknown'.
+    """
+    standard_name = var.get("standard_name")
+    if not isinstance(standard_name, str) or "temperature" not in standard_name.strip().lower():
+        return []
+
+    extra_attrs = var.get("extra_attrs")
+    attrs = extra_attrs if isinstance(extra_attrs, dict) else {}
+    raw_val = var.get("units_metadata") if var.get("units_metadata") is not None else attrs.get("units_metadata")
+
+    if isinstance(raw_val, bytes):
+        raw_val = raw_val.decode(errors="replace")
+    val = raw_val.strip() if isinstance(raw_val, str) else None
+
+    if not val:
+        return [Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units_metadata",
+            severity=WARNING,
+            message=(
+                f"Variable '{name}' has a temperature-related standard_name and should "
+                f"include a 'units_metadata' attribute set to one of: "
+                f"{', '.join(_UNITS_METADATA_TEMPERATURE_VALUES)}."
+            ),
+            valid_options=list(_UNITS_METADATA_TEMPERATURE_VALUES),
+        )]
+
+    if val not in _UNITS_METADATA_TEMPERATURE_VALUES:
+        return [Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units_metadata",
+            severity=WARNING,
+            message=(
+                f"'units_metadata' should be one of: "
+                f"{', '.join(_UNITS_METADATA_TEMPERATURE_VALUES)}."
+            ),
+            invalid_value=val,
+            valid_options=list(_UNITS_METADATA_TEMPERATURE_VALUES),
+        )]
+
+    return []
 
 def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
     by_name = {str(var.get("name") or "").casefold(): var for var in variables}
