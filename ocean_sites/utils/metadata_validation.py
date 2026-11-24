@@ -987,19 +987,29 @@ def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
             )
             var_to_axis[v["name"]] = str(axis_val).strip().upper()
 
+    bounds_vars = {
+        str(
+            v.get("bounds")
+            or (v.get("extra_attrs") or {}).get("bounds")
+            or (v.get("attributes") or {}).get("bounds")
+            or ""
+        ).strip()
+        for v in variables
+    } - {""}
+
     for var in variables:
         name = var.get("name") or "(unnamed)"
         raw_dims = var.get("dimensions") or []
         dims = raw_dims.strip().split() if isinstance(raw_dims, str) else list(raw_dims)
 
         dtype = str(var.get("dtype") or "").lower()
-        is_char = dtype in {"|s1", "s1", "char"}
-        trailing_strlen = (
+        has_trailing_dim = dtype in {"|s1", "s1", "char"} or name in bounds_vars
+        trailing_dim = (
             [dims[-1]]
-            if is_char and len(dims) > 1 and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
+            if has_trailing_dim and len(dims) > 1 and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
             else []
         )
-        check_dims = dims[:-1] if trailing_strlen else dims
+        check_dims = dims[:-1] if trailing_dim else dims
 
         other_dims = [d for d in check_dims if var_to_axis.get(d) not in _AXIS_ORDER]
         st_dims = sorted(
@@ -1010,9 +1020,8 @@ def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
         if not st_dims:
             continue
 
-        expected_dims = other_dims + st_dims + trailing_strlen
+        expected_dims = other_dims + st_dims + trailing_dim
 
-        expected_dims = other_dims + st_dims
         if dims != expected_dims:
             expected_str = " ".join(expected_dims)
             problems.append(Problem(
@@ -1021,7 +1030,7 @@ def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
                 field="dimensions",
                 severity=WARNING,
                 message=(
-                    f"CF §2.4 / OceanSITES requires spatiotemporal dimensions in (T, Z, Y, X) "
+                    f"Spatiotemporal dimensions should be in (T, Z, Y, X) "
                     f"order with any other dimensions to their left. Expected '({expected_str})'."
                 ),
                 valid_options=[expected_str],

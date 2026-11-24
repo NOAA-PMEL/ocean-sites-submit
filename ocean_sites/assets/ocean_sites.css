@@ -50,6 +50,10 @@ div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="di
 
 .metadata-save-status:not(:empty) { padding-bottom: 12px !important; }
 
+[id*="nc-var-record-err"]:not(:empty) {
+    margin-bottom: 12px;
+}
+
 /* For metadata validation - variables err */
 .nc-var-card.has-errors {
     border-color: rgba(255, 77, 77, 0.5) !important;
