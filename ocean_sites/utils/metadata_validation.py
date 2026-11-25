@@ -982,22 +982,33 @@ def _coordinate_attribute_problems(variables: list) -> list[Problem]:
 
 def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
     """
-    CF §2.4 / OceanSITES: arbitrary dimensions belong to the left of
-    spatiotemporal dimensions, and spatiotemporal dimensions must appear in
-    (T, Z, Y, X) order based on each coordinate variable's `axis` attribute.
+    CF §2.4 / OceanSITES:
+    1. Every dimension referenced by a variable (excluding trailing string-length
+       and bounds vertex dimensions) must exist as a variable in the file.
+    2. Arbitrary dimensions belong to the left of spatiotemporal dimensions, and
+       spatiotemporal dimensions must appear in (T, Z, Y, X) order based on each
+       coordinate variable's `axis` attribute.
     """
     problems: list[Problem] = []
 
-    var_to_axis = {}
+    var_to_axis: dict[str, str] = {}
+    var_to_dims: dict[str, list[str]] = {}
     for v in variables:
-        if v.get("name"):
-            axis_val = (
-                v.get("axis")
-                or (v.get("extra_attrs") or {}).get("axis")
-                or (v.get("attributes") or {}).get("axis")
-                or ""
-            )
-            var_to_axis[v["name"]] = str(axis_val).strip().upper()
+        v_name = v.get("name")
+        if not v_name:
+            continue
+        axis_val = (
+            v.get("axis")
+            or (v.get("extra_attrs") or {}).get("axis")
+            or (v.get("attributes") or {}).get("axis")
+            or ""
+        )
+        var_to_axis[v_name] = str(axis_val).strip().upper()
+
+        v_raw_dims = v.get("dimensions") or []
+        var_to_dims[v_name] = (
+            v_raw_dims.strip().split() if isinstance(v_raw_dims, str) else list(v_raw_dims)
+        )
 
     bounds_vars = {
         str(
@@ -1011,18 +1022,63 @@ def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
 
     for var in variables:
         name = var.get("name") or "(unnamed)"
-        raw_dims = var.get("dimensions") or []
-        dims = raw_dims.strip().split() if isinstance(raw_dims, str) else list(raw_dims)
+        dims = var_to_dims.get(name) or []
 
         dtype = str(var.get("dtype") or "").lower()
-        has_trailing_dim = dtype in {"|s1", "s1", "char"} or name in bounds_vars
+        # <PARAM>_DM char arrays are 1-char per cell (e.g. char TEMP_DM(TIME, DEPTH))
+        # and do not have a trailing string-length dimension[cite: 21]
+        is_string_char_var = (
+            var.get("var_type") != "dm"
+            and (dtype in {"|s1", "s1", "char"} or dtype.startswith(("|s", "s", "<u", ">u")))
+        )
+        has_trailing_dim = is_string_char_var or name in bounds_vars
         trailing_dim = (
             [dims[-1]]
-            if has_trailing_dim and len(dims) > 1 and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
+            if dims
+            and has_trailing_dim
+            and (len(dims) > 1 or is_string_char_var)
+            and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
             else []
         )
         check_dims = dims[:-1] if trailing_dim else dims
 
+        coords_raw = (
+            var.get("coordinates")
+            or (var.get("extra_attrs") or {}).get("coordinates")
+            or (var.get("attributes") or {}).get("coordinates")
+            or ""
+        )
+        coord_names = (
+            coords_raw.strip().split()
+            if isinstance(coords_raw, str)
+            else list(coords_raw or [])
+        )
+        aux_coord_dims = {
+            d
+            for c_name in coord_names
+            for d in var_to_dims.get(c_name, ())
+        }
+
+        # 1. Hard ERROR when a referenced dimension is neither a variable nor mapped by `coordinates`
+        for dim in check_dims:
+            if not isinstance(dim, str) or not dim:
+                continue
+            if dim in var_to_dims or dim in aux_coord_dims:
+                continue
+
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                severity=ERROR,
+                message=(
+                    f"Dimension '{dim}' referenced by '{name}' does not exist as a "
+                    "variable in the file."
+                ),
+                invalid_value=dim,
+            ))
+
+        # 2. Spatiotemporal (T, Z, Y, X) dimension ordering check
         other_dims = [d for d in check_dims if var_to_axis.get(d) not in _AXIS_ORDER]
         st_dims = sorted(
             (d for d in check_dims if var_to_axis.get(d) in _AXIS_ORDER),
