@@ -475,7 +475,7 @@ def _fields_named_in(message: str, known: set) -> list:
     """
     hits = [f for f in known if f in message]
     # Longest first, so 'geospatial_lat_min' wins over a hypothetical 'lat'
-    return sorted(hits, key=len, reverse=True)
+    return sorted(hits, key=lambda f: (-len(f), message.index(f)))
 
 def _problems_from_error(err: dict, scope: str, labels: dict, known: set, var_name: str = None) -> list:
     loc = err.get("loc") or ()
@@ -560,9 +560,16 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     """
     problems: list = []
     seen: set = set()
+    seen_global_pairs: set[frozenset[str]] = set()
 
     def add(p: Problem):
-        dedup_key = (p.key, p.message)
+        if p.scope == GLOBAL and p.also_fields:
+            pair = frozenset((p.field, *p.also_fields))
+            if pair in seen_global_pairs:
+                return
+            seen_global_pairs.add(pair)
+
+        dedup_key = p.key if p.scope == GLOBAL else (p.key, p.message)
         if dedup_key in seen:
             return
         seen.add(dedup_key)
