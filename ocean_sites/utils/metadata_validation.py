@@ -1633,6 +1633,7 @@ def _processing_level_problems(
         scope=scope,
         var_name=var_name,
         field="processing_level",
+        severity=WARNING,
         message=(
             "processing_level must be one of: "
             f"{'; '.join(_PROCESSING_LEVEL_VALUES)}."

@@ -161,9 +161,6 @@ def register_callbacks(app):
             if isinstance(metadata_store, dict) and '_original_dict' in metadata_store
             else original_store
         )
-        
-        should_open = isinstance(metadata_store, dict) and bool(metadata_store.get('_open_modal'))
-        ready_signal = {'ts': time.time()} if should_open else None
 
         # TO prevent metadata_store being populated with stale data from other submissions
         if not metadata_store or (not metadata_store.get("global_attributes") and not metadata_store.get("variables")):
@@ -395,6 +392,7 @@ def register_callbacks(app):
         Output({'type': 'nc-extra-attr-err', 'index': ALL}, 'children'),
         Output({'type': 'nc-extra-attr-value', 'index': ALL}, 'className'),
         Output('metadata-ready-store', 'data'),
+        Output('open-metadata-store', 'data', allow_duplicate=True),
         Input('metadata-problems-store', 'data'),
         Input('metadata-validation-mode', 'data'),
         Input('current-submission', 'data'),
@@ -499,11 +497,13 @@ def register_callbacks(app):
             )
      
         is_closed = (modal_style or {}).get('display') in (None, 'none')
-        ready_signal = (
-            {'ts': time.time()}
-            if (is_closed and open_metadata_store is not None and problems is not None)
-            else no_update
+        should_open_now = (
+            is_closed
+            and bool(open_metadata_store)
+            and problems is not None
         )
+        ready_signal = {'ts': time.time()} if should_open_now else no_update
+        next_open_store = None if should_open_now else no_update
 
         return (
             children,
@@ -513,4 +513,5 @@ def register_callbacks(app):
             extra_attr_errors,
             extra_attr_value_classes,
             ready_signal,
+            next_open_store,
         )

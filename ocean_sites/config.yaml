@@ -8,12 +8,12 @@ branding:
   organization_name: "Pacific Marine Environmental Laboratory"
   organization_short_name: "PMEL"
   
-  page_title: "Scientific Data Information System"
+  page_title: "OceanSITES Submission Platform"
   version: "v0.0.3"
 
   # Logo paths, served fro ocean_sites/assets
-  header_logo: "NOAA-OAP-Logo-reverse.svg"
-  footer_logo: "NOAA-OAP-Logo-reverse.svg"
+  header_logo: "NOAA-OceanSITES-Logo.svg"
+  footer_logo: "NOAA-OceanSITES-Logo.svg"
 
 # ====================================================================================
 # CONTACT INFORMATION
@@ -54,6 +54,10 @@ allow_multiple_data_files_to_submit: False # should be True/False
 # SUBMISSION ARCHIVES
 # ====================================================================================
 submission_archives: # The options for where data can be submitted to (will get fed into the agGrid.js file in assets)
+  - key: ndbc
+    icon: '🛟' 
+    label: 'NDBC'
+    enabled: true 
   - key: ncei
     icon: '🏛️' 
     label: 'NCEI'

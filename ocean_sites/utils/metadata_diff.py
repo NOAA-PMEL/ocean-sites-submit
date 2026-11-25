@@ -68,13 +68,15 @@ def _coerce_enum(value, enum_cls):
     Return the matching enum member for 'value', or None if it doesn't match
     any valid value/name on 'enum_cls'.
     """
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
+    if isinstance(value, (int, float)):
+        value = f"{value:g}"
     try:
-        return enum_cls(value) # matches .value e.g. "R" "data"
-    except ValueError:
-        try: 
-            return enum_cls[value] # fallback: matches by member name: e.g. "REAL_TIME"
+        return enum_cls(value)  # matches .value e.g. "R", "1.4"
+    except (ValueError, TypeError):
+        try:
+            return enum_cls[value]  # fallback: matches by member name e.g. "REAL_TIME"
         except (KeyError, TypeError):
             return None
 
