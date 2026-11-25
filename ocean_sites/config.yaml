@@ -54,6 +54,10 @@ allow_multiple_data_files_to_submit: False # should be True/False
 # SUBMISSION ARCHIVES
 # ====================================================================================
 submission_archives: # The options for where data can be submitted to (will get fed into the agGrid.js file in assets)
+  - key: ndbc
+    icon: '🛟' 
+    label: 'NDBC'
+    enabled: true 
   - key: ncei
     icon: '🏛️' 
     label: 'NCEI'
