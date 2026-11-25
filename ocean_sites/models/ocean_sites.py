@@ -63,7 +63,9 @@ data_type_db_enum = Enum(
 
 class FormatVersion(str, enum.Enum):
     V1_1 = "1.1"
+    V1_2 = "1.2"
     V1_3 = "1.3"
+    V1_4 = "1.4"
     V1_5 = "1.5"
 
     @property
@@ -394,6 +396,9 @@ class NetcdfVariable(Base):
     extra_attrs: Mapped[Optional[dict]] = mapped_column(
         JSONB, nullable=True, info={"label": "Extra Attributes"}
     )
+    observed_values: Mapped[Optional[list]] = mapped_column(
+        JSONB, nullable=True, info={"label": "Observed Values"}
+    )
 
     # # --- Provenance Tracking ----
     # source: Mapped[Optional[dict]] = mapped_column(
@@ -423,6 +428,7 @@ class NetcdfVariableBaseSchema(BaseModel):
     dtype: str
     dimensions: str
     extra_attrs: Optional[dict] = None
+    observed_values: Optional[list] = None
 
 class NetcdfCoordinateVariableSchema(NetcdfVariableBaseSchema):
     """Strict schema for coordinate variables"""

@@ -244,6 +244,12 @@ _SENSOR_MOUNT_VALUES = (
 
 _SENSOR_ORIENTATION_VALUES = ("downward", "upward", "horizontal")
 
+_UNITS_METADATA_TEMPERATURE_VALUES = (
+    "temperature: difference",
+    "temperature: on_scale",
+    "temperature: unknown",
+)
+
 # Same list save_all_ocean_sites_metadata() casts before insertion. Kept in sync so the validator sees the same types the DB will.
 VARIABLE_STRING_FIELDS = (
     "fill_value", "flag_values", "flag_meanings", "axis", "standard_name", "units"
@@ -469,7 +475,7 @@ def _fields_named_in(message: str, known: set) -> list:
     """
     hits = [f for f in known if f in message]
     # Longest first, so 'geospatial_lat_min' wins over a hypothetical 'lat'
-    return sorted(hits, key=len, reverse=True)
+    return sorted(hits, key=lambda f: (-len(f), message.index(f)))
 
 def _problems_from_error(err: dict, scope: str, labels: dict, known: set, var_name: str = None) -> list:
     loc = err.get("loc") or ()
@@ -554,11 +560,19 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     """
     problems: list = []
     seen: set = set()
+    seen_global_pairs: set[frozenset[str]] = set()
 
     def add(p: Problem):
-        if p.key in seen:
-            return # first message for a field wins, it si the more specific one
-        seen.add(p.key)
+        if p.scope == GLOBAL and p.also_fields:
+            pair = frozenset((p.field, *p.also_fields))
+            if pair in seen_global_pairs:
+                return
+            seen_global_pairs.add(pair)
+
+        dedup_key = p.key if p.scope == GLOBAL else (p.key, p.message)
+        if dedup_key in seen:
+            return
+        seen.add(dedup_key)
         problems.append(p)
 
     current = current or {}
@@ -611,9 +625,13 @@ def validate_metadata(current: dict, original: dict = None) -> list:
     for var in variables:
         for p in _validate_variable(var):
             add(p)
+    for p in _flag_data_values_problems(variables):
+        add(p)
     for p in _ancillary_variable_problems(variables):
         add(p)
     for p in _ancillary_reference_problems(variables):
+        add(p)
+    for p in _missing_ancillary_reference_problems(variables):
         add(p)
     for p in _coordinate_attribute_problems(variables):
         add(p)
@@ -659,6 +677,7 @@ def _validate_variable(var: dict) -> list:
     problems.extend(_data_variable_name_problems(name, cleaned_var))
     problems.extend(_numeric_attr_problems(cleaned_var))
     problems.extend(_attribute_name_problems(cleaned_var.get("extra_attrs"), VARIABLE, name))
+    problems.extend(_temperature_units_metadata_problems(name, cleaned_var))
 
     if var_type == "coordinate":
         problems.extend(_coordinate_axis_problems(name, cleaned_var))
@@ -970,22 +989,33 @@ def _coordinate_attribute_problems(variables: list) -> list[Problem]:
 
 def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
     """
-    CF §2.4 / OceanSITES: arbitrary dimensions belong to the left of
-    spatiotemporal dimensions, and spatiotemporal dimensions must appear in
-    (T, Z, Y, X) order based on each coordinate variable's `axis` attribute.
+    CF §2.4 / OceanSITES:
+    1. Every dimension referenced by a variable (excluding trailing string-length
+       and bounds vertex dimensions) must exist as a variable in the file.
+    2. Arbitrary dimensions belong to the left of spatiotemporal dimensions, and
+       spatiotemporal dimensions must appear in (T, Z, Y, X) order based on each
+       coordinate variable's `axis` attribute.
     """
     problems: list[Problem] = []
 
-    var_to_axis = {}
+    var_to_axis: dict[str, str] = {}
+    var_to_dims: dict[str, list[str]] = {}
     for v in variables:
-        if v.get("name"):
-            axis_val = (
-                v.get("axis")
-                or (v.get("extra_attrs") or {}).get("axis")
-                or (v.get("attributes") or {}).get("axis")
-                or ""
-            )
-            var_to_axis[v["name"]] = str(axis_val).strip().upper()
+        v_name = v.get("name")
+        if not v_name:
+            continue
+        axis_val = (
+            v.get("axis")
+            or (v.get("extra_attrs") or {}).get("axis")
+            or (v.get("attributes") or {}).get("axis")
+            or ""
+        )
+        var_to_axis[v_name] = str(axis_val).strip().upper()
+
+        v_raw_dims = v.get("dimensions") or []
+        var_to_dims[v_name] = (
+            v_raw_dims.strip().split() if isinstance(v_raw_dims, str) else list(v_raw_dims)
+        )
 
     bounds_vars = {
         str(
@@ -999,18 +1029,63 @@ def _dimension_order_problems(variables: list[dict]) -> list[Problem]:
 
     for var in variables:
         name = var.get("name") or "(unnamed)"
-        raw_dims = var.get("dimensions") or []
-        dims = raw_dims.strip().split() if isinstance(raw_dims, str) else list(raw_dims)
+        dims = var_to_dims.get(name) or []
 
         dtype = str(var.get("dtype") or "").lower()
-        has_trailing_dim = dtype in {"|s1", "s1", "char"} or name in bounds_vars
+        # <PARAM>_DM char arrays are 1-char per cell (e.g. char TEMP_DM(TIME, DEPTH))
+        # and do not have a trailing string-length dimension[cite: 21]
+        is_string_char_var = (
+            var.get("var_type") != "dm"
+            and (dtype in {"|s1", "s1", "char"} or dtype.startswith(("|s", "s", "<u", ">u")))
+        )
+        has_trailing_dim = is_string_char_var or name in bounds_vars
         trailing_dim = (
             [dims[-1]]
-            if has_trailing_dim and len(dims) > 1 and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
+            if dims
+            and has_trailing_dim
+            and (len(dims) > 1 or is_string_char_var)
+            and var_to_axis.get(dims[-1]) not in _AXIS_ORDER
             else []
         )
         check_dims = dims[:-1] if trailing_dim else dims
 
+        coords_raw = (
+            var.get("coordinates")
+            or (var.get("extra_attrs") or {}).get("coordinates")
+            or (var.get("attributes") or {}).get("coordinates")
+            or ""
+        )
+        coord_names = (
+            coords_raw.strip().split()
+            if isinstance(coords_raw, str)
+            else list(coords_raw or [])
+        )
+        aux_coord_dims = {
+            d
+            for c_name in coord_names
+            for d in var_to_dims.get(c_name, ())
+        }
+
+        # 1. Hard ERROR when a referenced dimension is neither a variable nor mapped by `coordinates`
+        for dim in check_dims:
+            if not isinstance(dim, str) or not dim:
+                continue
+            if dim in var_to_dims or dim in aux_coord_dims:
+                continue
+
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="dimensions",
+                severity=ERROR,
+                message=(
+                    f"Dimension '{dim}' referenced by '{name}' does not exist as a "
+                    "variable in the file."
+                ),
+                invalid_value=dim,
+            ))
+
+        # 2. Spatiotemporal (T, Z, Y, X) dimension ordering check
         other_dims = [d for d in check_dims if var_to_axis.get(d) not in _AXIS_ORDER]
         st_dims = sorted(
             (d for d in check_dims if var_to_axis.get(d) in _AXIS_ORDER),
@@ -1156,6 +1231,77 @@ def _dm_indicator_problems(name: str, var: dict) -> list[Problem]:
         invalid_value=value if isinstance(value, (str, int, float, bool)) else None,
         valid_options=list(_DM_FLAG_VALUES),
     )]
+
+def _parse_flag_values(raw) -> set[str]:
+    """Normalize `flag_values` (list, comma, semi-colon,space- or pipe- separated) to comparable strings."""
+    if raw is None or raw == "":
+        return set()
+    if isinstance(raw, (list, tuple)):
+        tokens = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        tokens = [t for t in re.split(r"[\s,;|]+", str(raw).strip()) if t]
+
+    normalized = set()
+    for t in tokens:
+        try:
+            f = float(t)
+            normalized.add(str(int(f)) if f.is_integer() else str(f))
+        except ValueError:
+            normalized.add(t)
+    return normalized
+
+
+def _flag_data_values_problems(variables: list[dict]) -> list[Problem]:
+    """
+    CF §3.5: verify that every non-fill value present in a flag variable's data
+    array is declared in its `flag_values` attribute.
+    """
+    problems: list[Problem] = []
+
+    for var in variables:
+        observed = var.get("observed_values")
+        if not observed:
+            continue
+
+        name = var.get("name") or "(unnamed)"
+        raw_flag_values = (
+            var.get("flag_values")
+            or (var.get("extra_attrs") or {}).get("flag_values")
+            or (var.get("attributes") or {}).get("flag_values")
+        )
+        declared = _parse_flag_values(raw_flag_values)
+        if not declared:
+            # Missing flag_values itself is already handled by required-attribute checks
+            continue
+
+        # Also exclude _FillValue in case the user edited it in the UI
+        fill_val = (
+            var.get("_FillValue")
+            or (var.get("extra_attrs") or {}).get("_FillValue")
+            or (var.get("attributes") or {}).get("_FillValue")
+        )
+        fill_set = _parse_flag_values(fill_val)
+
+        unexpected = []
+        for val in observed:
+            norm = next(iter(_parse_flag_values(val)), str(val))
+            if norm not in declared and norm not in fill_set:
+                unexpected.append(norm)
+
+        if unexpected:
+            unexpected_str = ", ".join(unexpected)
+            problems.append(Problem(
+                scope=VARIABLE,
+                var_name=name,
+                field="flag_values",
+                severity=ERROR,
+                message=(
+                    f"Data for '{name}' contains value(s) not listed in "
+                    f"flag_values: {unexpected_str}."
+                ),
+            ))
+
+    return problems
 
 def _sensor_attribute_problems(name: str, var: dict) -> list[Problem]:
     extra_attrs = var.get("extra_attrs")
@@ -1374,6 +1520,54 @@ def _attribute_name_problems(
             ))
 
     return problems
+
+def _temperature_units_metadata_problems(name: str, var: dict) -> list[Problem]:
+    """
+    CF §3.1.2 (v1.11+): variables with a temperature standard_name should define
+    `units_metadata` as one of 'temperature: on_scale', 'temperature: difference',
+    or 'temperature: unknown'.
+    """
+    standard_name = var.get("standard_name")
+    if not isinstance(standard_name, str) or "temperature" not in standard_name.strip().lower():
+        return []
+
+    extra_attrs = var.get("extra_attrs")
+    attrs = extra_attrs if isinstance(extra_attrs, dict) else {}
+    raw_val = var.get("units_metadata") if var.get("units_metadata") is not None else attrs.get("units_metadata")
+
+    if isinstance(raw_val, bytes):
+        raw_val = raw_val.decode(errors="replace")
+    val = raw_val.strip() if isinstance(raw_val, str) else None
+
+    if not val:
+        return [Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units_metadata",
+            severity=WARNING,
+            message=(
+                f"Variable '{name}' has a temperature-related standard_name and should "
+                f"include a 'units_metadata' attribute set to one of: "
+                f"{', '.join(repr(v) for v in _UNITS_METADATA_TEMPERATURE_VALUES)}."
+            ),
+            valid_options=list(_UNITS_METADATA_TEMPERATURE_VALUES),
+        )]
+
+    if val not in _UNITS_METADATA_TEMPERATURE_VALUES:
+        return [Problem(
+            scope=VARIABLE,
+            var_name=name,
+            field="units_metadata",
+            severity=WARNING,
+            message=(
+                f"'units_metadata' should be one of: "
+                f"{', '.join(repr(v) for v in _UNITS_METADATA_TEMPERATURE_VALUES)}."
+            ),
+            invalid_value=val,
+            valid_options=list(_UNITS_METADATA_TEMPERATURE_VALUES),
+        )]
+
+    return []
 
 def _ancillary_variable_problems(variables: list[dict]) -> list[Problem]:
     by_name = {str(var.get("name") or "").casefold(): var for var in variables}
@@ -1855,6 +2049,102 @@ def _ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
 
     return problems
 
+def _get_ancillary_list(var: dict) -> list[str]:
+    raw = (
+        var.get("ancillary_variables")
+        or (var.get("extra_attrs") or {}).get("ancillary_variables")
+        or (var.get("attributes") or {}).get("ancillary_variables")
+        or ""
+    )
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return str(raw).strip().split()
+
+
+def _missing_ancillary_reference_problems(variables: list[dict]) -> list[Problem]:
+    """
+    Bidirectional ancillary_variables check: if a variable's name matches a parent
+    parameter (e.g. PARAM_QC, PARAM_DM, PARAMraw) or is POSITION_QC, warn when
+    the parent variable does not list it in `ancillary_variables`.
+    """
+    var_by_name = {v["name"]: v for v in variables if v.get("name")}
+
+    # Exclude CF bounds variables (e.g. TIME_BOUNDS) from being treated as ancillary_variables
+    bounds_vars = {
+        str(
+            v.get("bounds")
+            or (v.get("extra_attrs") or {}).get("bounds")
+            or (v.get("attributes") or {}).get("bounds")
+            or ""
+        ).strip()
+        for v in variables
+    } - {""}
+
+    # Map X/Y coordinate variables by axis so POSITION_QC isn't tied to hardcoded names
+    xy_parents = [
+        v["name"] for v in variables
+        if v.get("name") and str(
+            v.get("axis")
+            or (v.get("extra_attrs") or {}).get("axis")
+            or (v.get("attributes") or {}).get("axis")
+            or ""
+        ).strip().upper() in {"X", "Y"}
+    ]
+
+    # Longest parent names first so the most specific parent always matches
+    parent_names = sorted(
+        (
+            v["name"] for v in variables
+            if v.get("name") and v.get("var_type") in {"data", "coordinate"}
+        ),
+        key=len,
+        reverse=True,
+    )
+    parent_patterns = [
+        (p, re.compile(rf"^{re.escape(p)}(?:_[A-Za-z0-9_]+|[a-z][a-z0-9_]*)$"))
+        for p in parent_names
+    ]
+
+    missing_by_parent: dict[str, list[str]] = {}
+
+    for var in variables:
+        anc_name = var.get("name")
+        if not anc_name or anc_name in bounds_vars:
+            continue
+
+        matched_parents: list[str] = []
+        if re.match(r"^POSITION(?:_[A-Za-z0-9_]+|[a-z][a-z0-9_]*)$", anc_name):
+            matched_parents = xy_parents
+        else:
+            for parent_name, pattern in parent_patterns:
+                if anc_name != parent_name and pattern.match(anc_name):
+                    matched_parents = [parent_name]
+                    break
+
+        for parent_name in matched_parents:
+            listed = set(_get_ancillary_list(var_by_name[parent_name]))
+            if anc_name not in listed:
+                missing_by_parent.setdefault(parent_name, []).append(anc_name)
+
+    problems: list[Problem] = []
+    for parent_name, missing in missing_by_parent.items():
+        existing = _get_ancillary_list(var_by_name[parent_name])
+        suggested = " ".join(existing + missing)
+        missing_str = ", ".join(missing)
+        problems.append(Problem(
+            scope=VARIABLE,
+            var_name=parent_name,
+            field="ancillary_variables",
+            severity=WARNING,
+            message=(
+                f"Ancillary variable(s) {missing_str} exist in the file but are not listed "
+                f"in '{parent_name}:ancillary_variables'."
+            ),
+            valid_options=[suggested],
+        ))
+
+    return problems
+
 # --------------------------------------------------------------
 # Read helpers for the UI layer
 # --------------------------------------------------------------
@@ -1888,12 +2178,10 @@ def variable_problems_by_name(problems: list) -> dict:
     out: dict = {}
 
     def add_problem(fields: dict, field: str, problem: dict) -> None:
-        existing = fields.get(field)
-        if (
-            existing is None
-            or (existing["severity"] == WARNING and problem["severity"] == ERROR)
-        ):
-            fields[field] = problem
+        bucket = fields.setdefault(field, [])
+        if problem not in bucket:
+            bucket.append(problem)
+            bucket.sort(key=lambda item: 0 if item["severity"] == ERROR else 1)
 
     for p in problems or []:
         if p["scope"] != VARIABLE:

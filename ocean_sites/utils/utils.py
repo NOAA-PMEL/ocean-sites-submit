@@ -420,7 +420,8 @@ def build_variables_list(
         variable_dict = {
             "name": var.get('name'), "var_type": var_type, "dtype": var.get('dtype'),
             "dimensions": var.get('dimensions') or [],
-            "extra_attrs": extra
+            "extra_attrs": extra,
+            "observed_values": var.get('observed_values'),
         }
         if var_type == 'data':
             variable_dict.update({

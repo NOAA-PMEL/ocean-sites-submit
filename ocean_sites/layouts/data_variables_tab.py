@@ -193,6 +193,10 @@ def _var_card_body_children(uid: str, var_type: str, attributes: dict, extra_sto
             children=attr_inputs
         ),
         _section_label('Extra attributes'),
+        html.Div(
+            id={'type': 'nc-var-extra-section-err', 'index': uid},
+            children=[],
+        ),
         html.Div(id={'type': 'nc-var-extra-container', 'index': uid}, children=extra_attr_children),
         html.Button(
             '+ add attribute',

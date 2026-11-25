@@ -54,6 +54,10 @@ div:has(> [id*="nc-var-card-body"]:not([style*="display: none"]):not([style*="di
     margin-bottom: 12px;
 }
 
+[id*="nc-var-extra-section-err"]:not(:empty) {
+    margin-bottom: 10px;
+}
+
 /* For metadata validation - variables err */
 .nc-var-card.has-errors {
     border-color: rgba(255, 77, 77, 0.5) !important;
