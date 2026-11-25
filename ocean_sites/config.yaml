@@ -12,8 +12,8 @@ branding:
   version: "v0.0.3"
 
   # Logo paths, served fro ocean_sites/assets
-  header_logo: "NOAA-OAP-Logo-reverse.svg"
-  footer_logo: "NOAA-OAP-Logo-reverse.svg"
+  header_logo: "NOAA-OceanSITES-Logo.png"
+  footer_logo: "NOAA-OceanSITES-Logo.png"
 
 # ====================================================================================
 # CONTACT INFORMATION
