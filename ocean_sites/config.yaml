@@ -8,12 +8,12 @@ branding:
   organization_name: "Pacific Marine Environmental Laboratory"
   organization_short_name: "PMEL"
   
-  page_title: "Scientific Data Information System"
+  page_title: "OceanSITES Submission Platform"
   version: "v0.0.3"
 
   # Logo paths, served fro ocean_sites/assets
-  header_logo: "NOAA-OceanSITES-Logo.png"
-  footer_logo: "NOAA-OceanSITES-Logo.png"
+  header_logo: "NOAA-OceanSITES-Logo.svg"
+  footer_logo: "NOAA-OceanSITES-Logo.svg"
 
 # ====================================================================================
 # CONTACT INFORMATION
